@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect width="512" height="512" rx="128" fill="#0f172a"/>
+  <rect x="32" y="32" width="448" height="448" rx="96" fill="#10b981"/>
+  <path d="M128 160h256v48H128z" fill="#064e3b"/>
+  <path d="M160 208h192v192H160z" fill="#ffffff" rx="16"/>
+  <text x="256" y="320" font-family="Arial, sans-serif" font-size="96" font-weight="900" fill="#064e3b" text-anchor="middle" dominant-baseline="central">₱</text>
+  <circle cx="210" cy="140" r="16" fill="#ffffff"/>
+  <circle cx="302" cy="140" r="16" fill="#ffffff"/>
+</svg>

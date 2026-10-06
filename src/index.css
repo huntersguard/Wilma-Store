@@ -1,0 +1,31 @@
+@import "tailwindcss";
+
+@layer utilities {
+  /* Hide scrollbars for clean mobile swiping */
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
+  }
+  .scrollbar-none {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+}
+
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  .fixed.inset-0.z-50,
+  .fixed.inset-0.z-50 * {
+    visibility: visible;
+  }
+  .fixed.inset-0.z-50 {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: auto;
+    background: white !important;
+    padding: 0 !important;
+  }
+}
