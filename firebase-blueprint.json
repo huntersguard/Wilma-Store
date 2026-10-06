@@ -1,0 +1,74 @@
+{
+  "entities": {
+    "Product": {
+      "title": "Product",
+      "description": "Inventory product item in the store",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "barcode": { "type": "string" },
+        "category": { "type": "string" },
+        "unit": { "type": "string" },
+        "costPrice": { "type": "number" },
+        "sellingPrice": { "type": "number" },
+        "stock": { "type": "number" },
+        "minStock": { "type": "number" },
+        "notes": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["name", "barcode", "costPrice", "sellingPrice", "stock"]
+    },
+    "SaleTransaction": {
+      "title": "SaleTransaction",
+      "description": "Completed POS sale receipt and ledger entry",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "receiptNumber": { "type": "string" },
+        "timestamp": { "type": "string" },
+        "items": { "type": "array" },
+        "subtotal": { "type": "number" },
+        "discount": { "type": "number" },
+        "total": { "type": "number" },
+        "cashTendered": { "type": "number" },
+        "change": { "type": "number" },
+        "paymentMethod": { "type": "string" },
+        "customerName": { "type": "string" },
+        "isCreditSettled": { "type": "boolean" },
+        "creditSettledDate": { "type": "string" },
+        "notes": { "type": "string" }
+      },
+      "required": ["receiptNumber", "timestamp", "items", "total", "paymentMethod"]
+    },
+    "StoreSettings": {
+      "title": "StoreSettings",
+      "description": "Shared store settings and configuration",
+      "type": "object",
+      "properties": {
+        "storeName": { "type": "string" },
+        "ownerName": { "type": "string" },
+        "contactNumber": { "type": "string" },
+        "address": { "type": "string" },
+        "currencySymbol": { "type": "string" },
+        "enableScanBeep": { "type": "boolean" },
+        "enableLowStockSound": { "type": "boolean" },
+        "defaultLowStockThreshold": { "type": "number" }
+      }
+    }
+  },
+  "firestore": {
+    "/products/{productId}": {
+      "schema": "Product",
+      "description": "Collection of all store products"
+    },
+    "/sales/{saleId}": {
+      "schema": "SaleTransaction",
+      "description": "Collection of all sales and credit transactions"
+    },
+    "/settings/{settingId}": {
+      "schema": "StoreSettings",
+      "description": "Store configuration document"
+    }
+  }
+}

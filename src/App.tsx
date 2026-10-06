@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Product, SaleTransaction, StoreSettings } from './types';
+import { Product, CartItem, SaleTransaction, StoreSettings } from './types';
 import {
   getStoredProducts,
   saveStoredProducts,
@@ -11,7 +11,19 @@ import {
   importFullBackup,
   resetToDefaults,
 } from './utils/storage';
-import { POSView } from './components/POSView';
+import {
+  testFirestoreConnection,
+  seedInitialFirestoreData,
+  subscribeToProducts,
+  subscribeToSales,
+  subscribeToSettings,
+  syncSaveProduct,
+  syncDeleteProduct,
+  syncRecordSale,
+  syncSettleCredit,
+  syncSaveSettings,
+} from './services/firebase';
+import { POSView, POSMode } from './components/POSView';
 import { InventoryView } from './components/InventoryView';
 import { LowStockAlertsView } from './components/LowStockAlertsView';
 import { UtangLedgerView } from './components/UtangLedgerView';
@@ -22,6 +34,7 @@ import { InstallPhoneModal } from './components/InstallPhoneModal';
 import {
   Store,
   ShoppingCart,
+  Receipt,
   Boxes,
   Tag,
   AlertTriangle,
@@ -33,6 +46,8 @@ import {
   Download,
   Settings,
   Smartphone,
+  Cloud,
+  CheckCircle2,
   X,
 } from 'lucide-react';
 import { playScanBeep, playWarningSound } from './utils/audio';
@@ -41,9 +56,12 @@ type ActiveTab = 'pos' | 'inventory' | 'low-stock' | 'utang' | 'sales';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('pos');
-  const [products, setProducts] = useState<Product[]>([]);
-  const [sales, setSales] = useState<SaleTransaction[]>([]);
+  const [posInitialMode, setPosInitialMode] = useState<POSMode>('catalog');
+  const [cart, setCart] = useState<CartItem[]>([]);
+  const [products, setProducts] = useState<Product[]>(getStoredProducts());
+  const [sales, setSales] = useState<SaleTransaction[]>(getStoredSales());
   const [settings, setSettings] = useState<StoreSettings>(getStoredSettings());
+  const [isCloudSynced, setIsCloudSynced] = useState<boolean>(false);
 
   // Global modals
   const [isPriceCheckerOpen, setIsPriceCheckerOpen] = useState(false);
@@ -52,15 +70,53 @@ export default function App() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isSoundEnabled, setIsSoundEnabled] = useState(true);
 
-  // Load initial data from localStorage
+  // Setup real-time Firebase multi-phone synchronization
   useEffect(() => {
-    setProducts(getStoredProducts());
-    setSales(getStoredSales());
-    setSettings(getStoredSettings());
+    let unsubscribeProducts = () => {};
+    let unsubscribeSales = () => {};
+    let unsubscribeSettings = () => {};
+
+    const initCloud = async () => {
+      try {
+        await testFirestoreConnection();
+        await seedInitialFirestoreData();
+        setIsCloudSynced(true);
+
+        // Real-time listener for products across all phones
+        unsubscribeProducts = subscribeToProducts((cloudProducts) => {
+          if (cloudProducts.length > 0) {
+            setProducts(cloudProducts);
+            saveStoredProducts(cloudProducts);
+          }
+        });
+
+        // Real-time listener for sales across all phones
+        unsubscribeSales = subscribeToSales((cloudSales) => {
+          setSales(cloudSales);
+          saveStoredSales(cloudSales);
+        });
+
+        // Real-time listener for store settings
+        unsubscribeSettings = subscribeToSettings((cloudSettings) => {
+          setSettings(cloudSettings);
+          saveStoredSettings(cloudSettings);
+        });
+      } catch (err) {
+        console.warn('Firebase init error, using local storage fallback:', err);
+      }
+    };
+
+    initCloud();
+
+    return () => {
+      unsubscribeProducts();
+      unsubscribeSales();
+      unsubscribeSettings();
+    };
   }, []);
 
   // Update products & save
-  const handleAddProduct = (newProd: Omit<Product, 'id' | 'updatedAt'>) => {
+  const handleAddProduct = async (newProd: Omit<Product, 'id' | 'updatedAt'>) => {
     const created: Product = {
       ...newProd,
       id: `prod-${Date.now()}`,
@@ -69,30 +125,58 @@ export default function App() {
     const updated = [created, ...products];
     setProducts(updated);
     saveStoredProducts(updated);
+
+    try {
+      await syncSaveProduct(created);
+    } catch (err) {
+      console.warn('Cloud sync add product fallback:', err);
+    }
   };
 
-  const handleUpdateProduct = (updatedProd: Product) => {
+  const handleUpdateProduct = async (updatedProd: Product) => {
     const updated = products.map((p) => (p.id === updatedProd.id ? updatedProd : p));
     setProducts(updated);
     saveStoredProducts(updated);
+
+    try {
+      await syncSaveProduct(updatedProd);
+    } catch (err) {
+      console.warn('Cloud sync update product fallback:', err);
+    }
   };
 
-  const handleDeleteProduct = (productId: string) => {
+  const handleDeleteProduct = async (productId: string) => {
     const updated = products.filter((p) => p.id !== productId);
     setProducts(updated);
     saveStoredProducts(updated);
+
+    try {
+      await syncDeleteProduct(productId);
+    } catch (err) {
+      console.warn('Cloud sync delete product fallback:', err);
+    }
   };
 
-  const handleQuickAdjustStock = (productId: string, delta: number) => {
+  const handleQuickAdjustStock = async (productId: string, delta: number) => {
+    let targetProd: Product | null = null;
     const updated = products.map((p) => {
       if (p.id === productId) {
         const nextStock = Math.max(0, p.stock + delta);
-        return { ...p, stock: nextStock, updatedAt: new Date().toISOString() };
+        targetProd = { ...p, stock: nextStock, updatedAt: new Date().toISOString() };
+        return targetProd;
       }
       return p;
     });
     setProducts(updated);
     saveStoredProducts(updated);
+
+    if (targetProd) {
+      try {
+        await syncSaveProduct(targetProd);
+      } catch (err) {
+        console.warn('Cloud sync adjust stock fallback:', err);
+      }
+    }
   };
 
   // Restock product from alerts
@@ -101,14 +185,14 @@ export default function App() {
   };
 
   // Complete a sale from POS
-  const handleCompleteSale = (saleData: Omit<SaleTransaction, 'id' | 'receiptNumber'>) => {
+  const handleCompleteSale = async (saleData: Omit<SaleTransaction, 'id' | 'receiptNumber'>) => {
     const newTransaction: SaleTransaction = {
       ...saleData,
       id: `sale-${Date.now()}`,
       receiptNumber: `OR-${Date.now().toString().slice(-6)}`,
     };
 
-    // Update sales list
+    // Update sales list locally
     const updatedSales = [newTransaction, ...sales];
     setSales(updatedSales);
     saveStoredSales(updatedSales);
@@ -129,10 +213,17 @@ export default function App() {
 
     setProducts(updatedProducts);
     saveStoredProducts(updatedProducts);
+
+    // Sync sale and stock deduction to Cloud Firestore
+    try {
+      await syncRecordSale(newTransaction, products);
+    } catch (err) {
+      console.warn('Cloud sync record sale fallback:', err);
+    }
   };
 
   // Settle credit from Utang ledger
-  const handleSettleCredit = (transactionId: string) => {
+  const handleSettleCredit = async (transactionId: string) => {
     const updatedSales = sales.map((s) => {
       if (s.id === transactionId) {
         return {
@@ -145,6 +236,12 @@ export default function App() {
     });
     setSales(updatedSales);
     saveStoredSales(updatedSales);
+
+    try {
+      await syncSettleCredit(transactionId);
+    } catch (err) {
+      console.warn('Cloud sync settle credit fallback:', err);
+    }
   };
 
   // Backup handlers
@@ -190,6 +287,8 @@ export default function App() {
   // Low stock counter
   const lowStockCount = products.filter((p) => p.stock <= p.minStock).length;
   const unpaidUtangCount = sales.filter((s) => s.paymentMethod === 'utang' && !s.isCreditSettled).length;
+  const cartItemCount = cart.reduce((sum, item) => sum + item.quantity, 0);
+  const cartGrandTotal = cart.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0);
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-emerald-500 selection:text-slate-950">
@@ -208,6 +307,22 @@ export default function App() {
                 </h1>
                 <span className="hidden md:inline text-[10px] uppercase font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
                   POS & Scanner
+                </span>
+                {/* Real-time Multi-phone Sync Status */}
+                <span
+                  className={`hidden sm:inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full border transition-colors ${
+                    isCloudSynced
+                      ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
+                      : 'bg-amber-500/15 text-amber-300 border-amber-500/30'
+                  }`}
+                  title={
+                    isCloudSynced
+                      ? 'Multi-Phone Cloud Sync is ACTIVE! Lahat ng phone ay may parehong data.'
+                      : 'Kumokonekta sa Cloud Database...'
+                  }
+                >
+                  <Cloud className="w-3 h-3" />
+                  <span>{isCloudSynced ? 'Live Cloud Sync' : 'Connecting...'}</span>
                 </span>
               </div>
               <p className="text-[11px] text-slate-400 hidden sm:block">
@@ -275,17 +390,43 @@ export default function App() {
 
         {/* Navigation Bar Tabs */}
         <div className="max-w-7xl mx-auto px-3 sm:px-6 flex items-center gap-1 overflow-x-auto scrollbar-none py-1.5 border-t border-slate-800/80 bg-slate-950/40">
+          {/* Paninda / Catalog Tab */}
           <button
             type="button"
-            onClick={() => setActiveTab('pos')}
+            onClick={() => {
+              setActiveTab('pos');
+              setPosInitialMode('catalog');
+            }}
             className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-2 transition-all whitespace-nowrap shrink-0 ${
-              activeTab === 'pos'
+              activeTab === 'pos' && posInitialMode === 'catalog'
                 ? 'bg-emerald-600 text-white shadow-xs'
                 : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
             }`}
           >
             <ShoppingCart className="w-3.5 h-3.5" />
-            <span>POS (Cashier)</span>
+            <span>Paninda (POS)</span>
+          </button>
+
+          {/* Kaha / Cashier Dedicated Tab */}
+          <button
+            type="button"
+            onClick={() => {
+              setActiveTab('pos');
+              setPosInitialMode('cashier');
+            }}
+            className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-2 transition-all whitespace-nowrap shrink-0 ${
+              activeTab === 'pos' && posInitialMode === 'cashier'
+                ? 'bg-emerald-600 text-white shadow-xs'
+                : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+            }`}
+          >
+            <Receipt className="w-3.5 h-3.5" />
+            <span>Kaha / Cashier</span>
+            {cartItemCount > 0 && (
+              <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-emerald-500 text-slate-950 font-extrabold animate-pulse">
+                {cartItemCount} • ₱{cartGrandTotal.toFixed(0)}
+              </span>
+            )}
           </button>
 
           <button
@@ -357,6 +498,9 @@ export default function App() {
         {activeTab === 'pos' && (
           <POSView
             products={products}
+            cart={cart}
+            setCart={setCart}
+            initialMode={posInitialMode}
             onCompleteSale={handleCompleteSale}
             onOpenPriceChecker={() => setIsPriceCheckerOpen(true)}
           />
@@ -453,6 +597,7 @@ export default function App() {
                     const next = { ...settings, storeName: e.target.value };
                     setSettings(next);
                     saveStoredSettings(next);
+                    syncSaveSettings(next).catch(() => {});
                   }}
                   className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white"
                 />
@@ -467,6 +612,7 @@ export default function App() {
                     const next = { ...settings, ownerName: e.target.value };
                     setSettings(next);
                     saveStoredSettings(next);
+                    syncSaveSettings(next).catch(() => {});
                   }}
                   className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white"
                 />

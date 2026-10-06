@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Product } from '../types';
 import { BarcodeScannerModal } from './BarcodeScannerModal';
-import { Camera, Search, CheckCircle2, AlertTriangle, XCircle, ShoppingCart, Eye, EyeOff, RotateCcw } from 'lucide-react';
+import { Camera, Search, CheckCircle2, AlertTriangle, XCircle, ShoppingCart, Eye, EyeOff, RotateCcw, Package } from 'lucide-react';
 import { playScanBeep, playWarningSound } from '../utils/audio';
 
 interface PriceCheckerModalProps {
@@ -141,18 +141,39 @@ export const PriceCheckerModal: React.FC<PriceCheckerModalProps> = ({
         <div className="p-5 flex-1 overflow-y-auto">
           {matchedProduct ? (
             <div className="bg-slate-950 border border-slate-800 rounded-2xl p-5 sm:p-6 space-y-5">
-              {/* Product Title & Category */}
-              <div>
-                <span className="text-xs font-medium text-emerald-400 uppercase tracking-wider">
-                  {matchedProduct.category}
-                </span>
-                <h3 className="text-lg sm:text-xl font-bold text-white mt-0.5 leading-snug">
-                  {matchedProduct.name}
-                </h3>
-                <p className="text-xs text-slate-400 font-mono mt-1">
-                  Barcode: <span className="text-slate-300">{matchedProduct.barcode}</span> · Unit:{' '}
-                  <span className="text-slate-300 uppercase">{matchedProduct.unit}</span>
-                </p>
+              {/* Product Header with Photo */}
+              <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
+                {/* Photo container */}
+                <div className="w-24 h-24 sm:w-28 sm:h-28 rounded-2xl overflow-hidden bg-slate-900 border border-slate-800 shrink-0 shadow-md">
+                  {matchedProduct.imageUrl ? (
+                    <img
+                      src={matchedProduct.imageUrl}
+                      alt={matchedProduct.name}
+                      className="w-full h-full object-cover"
+                      onError={(e) => {
+                        (e.target as HTMLElement).style.display = 'none';
+                      }}
+                    />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center text-slate-600">
+                      <Package className="w-10 h-10 opacity-40" />
+                    </div>
+                  )}
+                </div>
+
+                {/* Product Title & Details */}
+                <div className="flex-1 min-w-0">
+                  <span className="text-xs font-semibold text-emerald-400 uppercase tracking-wider">
+                    {matchedProduct.category}
+                  </span>
+                  <h3 className="text-lg sm:text-xl font-bold text-white mt-0.5 leading-snug">
+                    {matchedProduct.name}
+                  </h3>
+                  <p className="text-xs text-slate-400 font-mono mt-1">
+                    Barcode: <span className="text-slate-300 font-bold">{matchedProduct.barcode}</span> · Sukat:{' '}
+                    <span className="text-slate-300 uppercase font-semibold">{matchedProduct.unit}</span>
+                  </p>
+                </div>
               </div>
 
               {/* Huge Price Tag */}

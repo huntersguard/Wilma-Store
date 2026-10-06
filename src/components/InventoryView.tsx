@@ -18,6 +18,8 @@ import {
   PackageCheck,
   PackageX,
   FileSpreadsheet,
+  Package,
+  Image as ImageIcon,
 } from 'lucide-react';
 import { playScanBeep } from '../utils/audio';
 
@@ -62,6 +64,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
     sellingPrice: 0,
     stock: 10,
     minStock: 5,
+    imageUrl: '',
     notes: '',
   });
 
@@ -95,6 +98,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
       sellingPrice: 13,
       stock: 12,
       minStock: 5,
+      imageUrl: '',
       notes: '',
     });
     setIsAddModalOpen(true);
@@ -111,6 +115,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
       sellingPrice: p.sellingPrice,
       stock: p.stock,
       minStock: p.minStock,
+      imageUrl: p.imageUrl || '',
       notes: p.notes || '',
     });
   };
@@ -119,6 +124,19 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
     setIsScannerOpen(false);
     setFormData((prev) => ({ ...prev, barcode: scannedBarcode }));
     playScanBeep();
+  };
+
+  const handleProductPhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      const dataUrl = evt.target?.result as string;
+      if (dataUrl) {
+        setFormData((prev) => ({ ...prev, imageUrl: dataUrl }));
+      }
+    };
+    reader.readAsDataURL(file);
   };
 
   const handleSaveAdd = (e: React.FormEvent) => {
@@ -134,6 +152,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
       sellingPrice: Number(formData.sellingPrice) || 0,
       stock: Number(formData.stock) || 0,
       minStock: Number(formData.minStock) || 5,
+      imageUrl: formData.imageUrl.trim() || undefined,
       notes: formData.notes.trim(),
     });
 
@@ -154,6 +173,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
       sellingPrice: Number(formData.sellingPrice) || 0,
       stock: Number(formData.stock) || 0,
       minStock: Number(formData.minStock) || 5,
+      imageUrl: formData.imageUrl.trim() || undefined,
       notes: formData.notes.trim(),
       updatedAt: new Date().toISOString(),
     });
@@ -380,13 +400,33 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
 
                   return (
                     <tr key={p.id} className="hover:bg-slate-800/30 transition-colors">
-                      {/* Name & Barcode */}
+                      {/* Name & Barcode with Photo */}
                       <td className="py-3 px-4">
-                        <div className="font-semibold text-white">{p.name}</div>
-                        <div className="text-[11px] text-slate-400 font-mono flex items-center gap-1.5 mt-0.5">
-                          <span>{p.barcode}</span>
-                          <span className="text-slate-600">·</span>
-                          <span className="uppercase text-slate-500 text-[10px]">{p.unit}</span>
+                        <div className="flex items-center gap-3">
+                          <div className="w-11 h-11 rounded-xl overflow-hidden bg-slate-950 border border-slate-800 shrink-0">
+                            {p.imageUrl ? (
+                              <img
+                                src={p.imageUrl}
+                                alt={p.name}
+                                className="w-full h-full object-cover"
+                                onError={(e) => {
+                                  (e.target as HTMLElement).style.display = 'none';
+                                }}
+                              />
+                            ) : (
+                              <div className="w-full h-full flex items-center justify-center text-slate-600">
+                                <Package className="w-5 h-5 opacity-40" />
+                              </div>
+                            )}
+                          </div>
+                          <div>
+                            <div className="font-semibold text-white">{p.name}</div>
+                            <div className="text-[11px] text-slate-400 font-mono flex items-center gap-1.5 mt-0.5">
+                              <span>{p.barcode}</span>
+                              <span className="text-slate-600">·</span>
+                              <span className="uppercase text-slate-500 text-[10px]">{p.unit}</span>
+                            </div>
+                          </div>
                         </div>
                       </td>
 
@@ -568,6 +608,53 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                   placeholder="Hal. Lucky Me Pancit Canton Kalamansi 80g"
                   className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2 text-xs sm:text-sm text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
                 />
+              </div>
+
+              {/* Product Photo / Image */}
+              <div className="space-y-1.5 bg-slate-950/60 p-3 rounded-xl border border-slate-800">
+                <label className="text-xs font-medium text-slate-300 block">Litrato ng Paninda (Product Photo)</label>
+                <div className="flex items-center gap-3">
+                  {/* Photo preview */}
+                  <div className="w-14 h-14 rounded-xl overflow-hidden bg-slate-900 border border-slate-700 shrink-0 flex items-center justify-center">
+                    {formData.imageUrl ? (
+                      <img src={formData.imageUrl} alt="Preview" className="w-full h-full object-cover" />
+                    ) : (
+                      <Package className="w-6 h-6 text-slate-600" />
+                    )}
+                  </div>
+
+                  <div className="flex-1 space-y-1.5">
+                    <div className="flex gap-2">
+                      <label className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors shrink-0">
+                        <Camera className="w-3.5 h-3.5" />
+                        <span>Kumuha ng Litrato (Phone Camera)</span>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          capture="environment"
+                          onChange={handleProductPhotoUpload}
+                          className="hidden"
+                        />
+                      </label>
+                      {formData.imageUrl && (
+                        <button
+                          type="button"
+                          onClick={() => setFormData((prev) => ({ ...prev, imageUrl: '' }))}
+                          className="px-2 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-400 text-xs rounded-lg transition-colors"
+                        >
+                          Alisin
+                        </button>
+                      )}
+                    </div>
+                    <input
+                      type="url"
+                      value={formData.imageUrl}
+                      onChange={(e) => setFormData({ ...formData, imageUrl: e.target.value })}
+                      placeholder="O i-paste ang Image Web Link..."
+                      className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1 text-[11px] text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
+                    />
+                  </div>
+                </div>
               </div>
 
               {/* Category & Unit */}

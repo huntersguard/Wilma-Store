@@ -13,7 +13,18 @@ export function getStoredProducts(): Product[] {
       return INITIAL_PRODUCTS;
     }
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) && parsed.length > 0 ? parsed : INITIAL_PRODUCTS;
+    if (Array.isArray(parsed) && parsed.length > 0) {
+      // Ensure existing stored products get image URLs if missing
+      const enriched = parsed.map((item: Product) => {
+        if (!item.imageUrl) {
+          const match = INITIAL_PRODUCTS.find((p) => p.id === item.id || p.barcode === item.barcode);
+          if (match?.imageUrl) return { ...item, imageUrl: match.imageUrl };
+        }
+        return item;
+      });
+      return enriched;
+    }
+    return INITIAL_PRODUCTS;
   } catch (err) {
     console.error('Error reading products from storage:', err);
     return INITIAL_PRODUCTS;
@@ -55,7 +66,13 @@ export function getStoredSettings(): StoreSettings {
       localStorage.setItem(SETTINGS_KEY, JSON.stringify(DEFAULT_SETTINGS));
       return DEFAULT_SETTINGS;
     }
-    return { ...DEFAULT_SETTINGS, ...JSON.parse(raw) };
+    const parsed = JSON.parse(raw);
+    if (parsed.storeName === 'Aling Nena Tindahan & Sari-Sari') {
+      parsed.storeName = 'Tindahan ni Wilma';
+      parsed.ownerName = 'Wilma';
+      localStorage.setItem(SETTINGS_KEY, JSON.stringify(parsed));
+    }
+    return { ...DEFAULT_SETTINGS, ...parsed };
   } catch (err) {
     console.error('Error reading settings:', err);
     return DEFAULT_SETTINGS;

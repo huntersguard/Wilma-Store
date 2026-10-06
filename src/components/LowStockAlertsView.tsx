@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Product } from '../types';
-import { AlertTriangle, XCircle, PackagePlus, Bell, TrendingDown, DollarSign, CheckCircle2 } from 'lucide-react';
+import { AlertTriangle, XCircle, PackagePlus, Bell, TrendingDown, DollarSign, CheckCircle2, Package } from 'lucide-react';
 import { playWarningSound } from '../utils/audio';
 
 interface LowStockAlertsViewProps {
@@ -108,17 +108,28 @@ export const LowStockAlertsView: React.FC<LowStockAlertsViewProps> = ({
                   return (
                     <div
                       key={p.id}
-                      className="bg-slate-900 border border-rose-500/30 rounded-xl p-4 flex flex-col justify-between space-y-3 shadow-xs"
+                      className="bg-slate-900 border border-rose-500/30 rounded-2xl p-4 flex flex-col justify-between space-y-3 shadow-xs"
                     >
                       <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <span className="text-[10px] font-medium text-rose-400/80 uppercase">
-                            {p.category}
-                          </span>
-                          <h4 className="text-sm font-bold text-white mt-0.5">{p.name}</h4>
-                          <span className="text-[11px] text-slate-500 font-mono block mt-0.5">
-                            Barcode: {p.barcode}
-                          </span>
+                        <div className="flex items-center gap-3">
+                          <div className="w-12 h-12 rounded-xl overflow-hidden bg-slate-950 border border-slate-800 shrink-0">
+                            {p.imageUrl ? (
+                              <img src={p.imageUrl} alt={p.name} className="w-full h-full object-cover" />
+                            ) : (
+                              <div className="w-full h-full flex items-center justify-center text-slate-600">
+                                <Package className="w-5 h-5 opacity-40" />
+                              </div>
+                            )}
+                          </div>
+                          <div>
+                            <span className="text-[10px] font-medium text-rose-400/80 uppercase">
+                              {p.category}
+                            </span>
+                            <h4 className="text-sm font-bold text-white mt-0.5">{p.name}</h4>
+                            <span className="text-[11px] text-slate-500 font-mono block mt-0.5">
+                              Barcode: {p.barcode}
+                            </span>
+                          </div>
                         </div>
                         <div className="text-right shrink-0">
                           <span className="inline-block px-2 py-0.5 rounded text-[11px] font-bold bg-rose-500/20 text-rose-400 border border-rose-500/30">
@@ -171,17 +182,28 @@ export const LowStockAlertsView: React.FC<LowStockAlertsViewProps> = ({
                   return (
                     <div
                       key={p.id}
-                      className="bg-slate-900 border border-amber-500/30 rounded-xl p-4 flex flex-col justify-between space-y-3 shadow-xs"
+                      className="bg-slate-900 border border-amber-500/30 rounded-2xl p-4 flex flex-col justify-between space-y-3 shadow-xs"
                     >
                       <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <span className="text-[10px] font-medium text-amber-400/80 uppercase">
-                            {p.category}
-                          </span>
-                          <h4 className="text-sm font-bold text-white mt-0.5">{p.name}</h4>
-                          <span className="text-[11px] text-slate-500 font-mono block mt-0.5">
-                            Barcode: {p.barcode}
-                          </span>
+                        <div className="flex items-center gap-3">
+                          <div className="w-12 h-12 rounded-xl overflow-hidden bg-slate-950 border border-slate-800 shrink-0">
+                            {p.imageUrl ? (
+                              <img src={p.imageUrl} alt={p.name} className="w-full h-full object-cover" />
+                            ) : (
+                              <div className="w-full h-full flex items-center justify-center text-slate-600">
+                                <Package className="w-5 h-5 opacity-40" />
+                              </div>
+                            )}
+                          </div>
+                          <div>
+                            <span className="text-[10px] font-medium text-amber-400/80 uppercase">
+                              {p.category}
+                            </span>
+                            <h4 className="text-sm font-bold text-white mt-0.5">{p.name}</h4>
+                            <span className="text-[11px] text-slate-500 font-mono block mt-0.5">
+                              Barcode: {p.barcode}
+                            </span>
+                          </div>
                         </div>
                         <div className="text-right shrink-0">
                           <span className="inline-block px-2 py-0.5 rounded text-[11px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
