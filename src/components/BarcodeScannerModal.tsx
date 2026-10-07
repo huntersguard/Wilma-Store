@@ -12,9 +12,8 @@ import {
   CheckCircle2,
   Upload,
   Sparkles,
-  CameraOff,
 } from 'lucide-react';
-import { playScanBeep, triggerHaptic } from '../utils/audio';
+import { playScanBeep } from '../utils/audio';
 
 interface BarcodeScannerModalProps {
   isOpen: boolean;
@@ -54,17 +53,29 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
   const streamRef = useRef<MediaStream | null>(null);
   const html5QrCodeRef = useRef<Html5Qrcode | null>(null);
   const animationFrameRef = useRef<number | null>(null);
-  const lastScanTimestampRef = useRef<number>(0);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const scannerContainerId = 'interactive-barcode-viewport';
 
+  // Strict Lifecycle & Anti-Loop Refs
+  const isScannerActiveRef = useRef<boolean>(false);
+  const hasEmittedScanRef = useRef<boolean>(false);
+  const scanSessionIdRef = useRef<number>(0);
+
   useEffect(() => {
     if (!isOpen) {
+      hasEmittedScanRef.current = true;
+      isScannerActiveRef.current = false;
+      scanSessionIdRef.current = 0;
       stopCamera();
       setLastScannedCode(null);
       setHasCameraError(null);
       return;
     }
+
+    // Reset scanner state on open
+    hasEmittedScanRef.current = false;
+    isScannerActiveRef.current = true;
+    scanSessionIdRef.current = Date.now();
 
     if (activeTab === 'camera') {
       startCamera();
@@ -73,28 +84,39 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
     }
 
     return () => {
+      hasEmittedScanRef.current = true;
+      isScannerActiveRef.current = false;
+      scanSessionIdRef.current = 0;
       stopCamera();
     };
   }, [isOpen, activeTab]);
 
+  /**
+   * Safe Single-Fire Barcode Handler:
+   * Freezes scanning, cancels all loops, stops camera, triggers audio ONCE, and closes modal.
+   */
   const handleBarcodeDetected = (decodedText: string) => {
     const cleanText = decodedText.trim();
     if (!cleanText) return;
 
-    const now = Date.now();
-    // Debounce duplicate scans within 1.5 seconds
-    if (now - lastScanTimestampRef.current < 1500 && lastScannedCode === cleanText) {
+    // Strict guard: ensure we only ever fire ONCE per open session
+    if (hasEmittedScanRef.current || !isScannerActiveRef.current) {
       return;
     }
 
-    lastScanTimestampRef.current = now;
+    hasEmittedScanRef.current = true;
+    isScannerActiveRef.current = false;
+    scanSessionIdRef.current = 0;
+
+    // Immediately stop camera and kill all loops
+    stopCamera();
+
     setLastScannedCode(cleanText);
     playScanBeep();
-    triggerHaptic([70, 40]);
 
-    setTimeout(() => {
-      onScan(cleanText);
-    }, 280);
+    // Call onScan and close scanner modal immediately
+    onScan(cleanText);
+    onClose();
   };
 
   /**
@@ -108,22 +130,31 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
       setIsScanning(true);
       await stopCamera();
 
+      // Reset activity refs for new start
+      hasEmittedScanRef.current = false;
+      isScannerActiveRef.current = true;
+      const currentSessionId = Date.now();
+      scanSessionIdRef.current = currentSessionId;
+
       // Check if native BarcodeDetector API is supported
       const hasNativeDetector = typeof window !== 'undefined' && 'BarcodeDetector' in window;
       setIsNativeHardwareEngine(hasNativeDetector);
 
       if (hasNativeDetector) {
-        await startNativeBarcodeDetector();
+        await startNativeBarcodeDetector(currentSessionId);
       } else {
-        await startHtml5QrcodeEngine();
+        await startHtml5QrcodeEngine(currentSessionId);
       }
     } catch (err: any) {
       console.error('Camera startup error:', err);
       // Fallback to Html5Qrcode if native engine threw
       try {
         console.log('Falling back to Html5Qrcode engine...');
-        await startHtml5QrcodeEngine();
+        const currentSessionId = Date.now();
+        scanSessionIdRef.current = currentSessionId;
+        await startHtml5QrcodeEngine(currentSessionId);
       } catch (fallbackErr: any) {
+        isScannerActiveRef.current = false;
         setIsScanning(false);
         setHasCameraError(
           fallbackErr?.message ||
@@ -138,7 +169,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
    * ENGINE 1: Native Hardware BarcodeDetector
    * Uses Apple Vision / Google MLKit hardware acceleration at 60 FPS
    */
-  const startNativeBarcodeDetector = async () => {
+  const startNativeBarcodeDetector = async (sessionId: number) => {
     const video = document.getElementById('native-scanner-video') as HTMLVideoElement | null;
     if (!video) throw new Error('Video element not found');
 
@@ -152,6 +183,13 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
     };
 
     const stream = await navigator.mediaDevices.getUserMedia(constraints);
+
+    // If modal was closed or session cancelled during getUserMedia, abort immediately!
+    if (!isScannerActiveRef.current || hasEmittedScanRef.current || scanSessionIdRef.current !== sessionId) {
+      stream.getTracks().forEach((track) => track.stop());
+      return;
+    }
+
     streamRef.current = stream;
     video.srcObject = stream;
     video.setAttribute('playsinline', 'true');
@@ -173,20 +211,49 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
     const detector = new window.BarcodeDetector({ formats });
 
     const scanLoop = async () => {
-      if (video.readyState >= 2) {
+      // 1. Strict guard: If session expired, stopped, or scan was already emitted, KILL loop immediately!
+      if (
+        scanSessionIdRef.current !== sessionId ||
+        !isScannerActiveRef.current ||
+        hasEmittedScanRef.current
+      ) {
+        return;
+      }
+
+      if (video && video.readyState >= 2) {
         try {
           const barcodes = await detector.detect(video);
+
+          // 2. Strict guard after async detect: verify still active
+          if (
+            scanSessionIdRef.current !== sessionId ||
+            !isScannerActiveRef.current ||
+            hasEmittedScanRef.current
+          ) {
+            return;
+          }
+
           if (barcodes && barcodes.length > 0) {
             const result = barcodes[0].rawValue;
-            if (result) {
-              handleBarcodeDetected(result);
+            if (result && result.trim()) {
+              // Valid barcode found! Fire single handler and STOP immediately!
+              handleBarcodeDetected(result.trim());
+              return; // Do NOT schedule next frame!
             }
           }
         } catch {
           // ignore detection frame errors
         }
       }
-      animationFrameRef.current = requestAnimationFrame(scanLoop);
+
+      // 3. Reschedule next frame ONLY if scanner is still active and valid
+      if (
+        scanSessionIdRef.current === sessionId &&
+        isScannerActiveRef.current &&
+        !hasEmittedScanRef.current
+      ) {
+        animationFrameRef.current = requestAnimationFrame(scanLoop);
+      }
     };
 
     animationFrameRef.current = requestAnimationFrame(scanLoop);
@@ -195,8 +262,12 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
   /**
    * ENGINE 2: Html5Qrcode Fallback Engine
    */
-  const startHtml5QrcodeEngine = async () => {
+  const startHtml5QrcodeEngine = async (sessionId: number) => {
     await new Promise((r) => setTimeout(r, 120));
+
+    if (scanSessionIdRef.current !== sessionId || !isScannerActiveRef.current || hasEmittedScanRef.current) {
+      return;
+    }
 
     const element = document.getElementById(scannerContainerId);
     if (!element) return;
@@ -222,8 +293,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
     html5QrCodeRef.current = html5QrCode;
 
     const config = {
-      fps: 25,
-      // Tall and generous scanning area so barcode quiet zones and tall packages fit easily
+      fps: 20,
       qrbox: (viewfinderWidth: number, viewfinderHeight: number) => ({
         width: Math.floor(viewfinderWidth * 0.88),
         height: Math.floor(viewfinderHeight * 0.75),
@@ -235,7 +305,17 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
     await html5QrCode.start(
       { facingMode: 'environment' },
       config,
-      (decodedText) => handleBarcodeDetected(decodedText),
+      (decodedText) => {
+        // Strict guard against multiple triggers
+        if (
+          scanSessionIdRef.current !== sessionId ||
+          !isScannerActiveRef.current ||
+          hasEmittedScanRef.current
+        ) {
+          return;
+        }
+        handleBarcodeDetected(decodedText);
+      },
       () => {}
     );
 
@@ -248,27 +328,47 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
     }
   };
 
+  /**
+   * Stop Camera and completely clean up all streams, loops, and video elements
+   */
   const stopCamera = async () => {
+    isScannerActiveRef.current = false;
+    scanSessionIdRef.current = 0;
+
     if (animationFrameRef.current) {
       cancelAnimationFrame(animationFrameRef.current);
       animationFrameRef.current = null;
     }
 
     if (streamRef.current) {
-      streamRef.current.getTracks().forEach((track) => track.stop());
+      streamRef.current.getTracks().forEach((track) => {
+        try {
+          track.stop();
+        } catch {}
+      });
       streamRef.current = null;
     }
 
-    if (html5QrCodeRef.current) {
+    const nativeVideo =
+      videoRef.current || (document.getElementById('native-scanner-video') as HTMLVideoElement | null);
+    if (nativeVideo) {
       try {
-        if (html5QrCodeRef.current.isScanning) {
-          await html5QrCodeRef.current.stop();
-        }
-        await html5QrCodeRef.current.clear();
-      } catch (err) {
-        console.warn('Stop error:', err);
-      }
+        nativeVideo.pause();
+        nativeVideo.srcObject = null;
+      } catch {}
+    }
+
+    if (html5QrCodeRef.current) {
+      const qrInstance = html5QrCodeRef.current;
       html5QrCodeRef.current = null;
+      try {
+        if (qrInstance.isScanning) {
+          await qrInstance.stop();
+        }
+        await qrInstance.clear();
+      } catch (err) {
+        console.warn('Html5Qrcode cleanup warning:', err);
+      }
     }
 
     setIsScanning(false);
@@ -304,10 +404,11 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
 
   /**
    * SNAP & SCAN: Freezes the video frame, increases contrast, and decodes.
-   * Extraordinary accuracy for wrinkled packaging, sachet margins, and glare.
    */
   const handleCaptureSnapshot = async () => {
+    if (hasEmittedScanRef.current) return;
     setIsProcessingPhoto(true);
+
     try {
       let video: HTMLVideoElement | null = null;
       if (isNativeHardwareEngine) {
@@ -324,23 +425,20 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
       const ctx = canvas.getContext('2d');
       if (!ctx) throw new Error('Could not get canvas');
 
-      // Draw high resolution frame
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-      // Decode with native detector or Html5Qrcode
       if ('BarcodeDetector' in window) {
         const detector = new window.BarcodeDetector({
           formats: ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'qr_code'],
         });
         const barcodes = await detector.detect(canvas);
-        if (barcodes && barcodes.length > 0) {
+        if (barcodes && barcodes.length > 0 && barcodes[0].rawValue) {
           handleBarcodeDetected(barcodes[0].rawValue);
           setIsProcessingPhoto(false);
           return;
         }
       }
 
-      // Fallback: Html5Qrcode file scan
       if (html5QrCodeRef.current) {
         canvas.toBlob(async (blob) => {
           if (!blob) return;
@@ -388,14 +486,13 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
           formats: ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'qr_code'],
         });
         const barcodes = await detector.detect(img);
-        if (barcodes && barcodes.length > 0) {
+        if (barcodes && barcodes.length > 0 && barcodes[0].rawValue) {
           handleBarcodeDetected(barcodes[0].rawValue);
           setIsProcessingPhoto(false);
           return;
         }
       }
 
-      // Fallback with Html5Qrcode
       const scanner = new Html5Qrcode('file-scanner-temp', { verbose: false });
       const res = await scanner.scanFileV2(file, true);
       if (res?.decodedText) {
@@ -415,8 +512,9 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
   const handleManualSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!manualCode.trim()) return;
-    onScan(manualCode.trim());
+    const code = manualCode.trim();
     setManualCode('');
+    handleBarcodeDetected(code);
   };
 
   if (!isOpen) return null;
@@ -446,7 +544,10 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
             </div>
           </div>
           <button
-            onClick={onClose}
+            onClick={() => {
+              stopCamera();
+              onClose();
+            }}
             className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
             title="Isara ang Scanner"
           >
@@ -506,7 +607,6 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
                 {/* Laser Overlay Guide */}
                 {isScanning && !hasCameraError && (
                   <div className="absolute inset-0 pointer-events-none flex flex-col items-center justify-center">
-                    {/* Targeting reticle with tall, spacious area */}
                     <div className="relative w-[88%] max-w-[340px] h-48 sm:h-56 border-2 border-emerald-400/80 rounded-2xl shadow-[0_0_25px_rgba(16,185,129,0.25)]">
                       {/* Corner marks */}
                       <span className="absolute -top-1.5 -left-1.5 w-5 h-5 border-t-3 border-l-3 border-emerald-400 rounded-tl-xl" />
@@ -536,7 +636,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
                 {lastScannedCode && (
                   <div className="absolute bottom-3 left-3 right-3 bg-emerald-500 text-slate-950 px-3 py-2 rounded-xl flex items-center justify-center gap-2 font-bold text-xs shadow-lg animate-bounce z-20">
                     <CheckCircle2 className="w-4 h-4" />
-                    <span>Scanned: {lastScannedCode}</span>
+                    <span>Na-scan: {lastScannedCode}</span>
                   </div>
                 )}
 
@@ -573,7 +673,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
                 )}
               </div>
 
-              {/* SNAP TO SCAN & Upload Photo Actions (CRITICAL FIX for stubborn barcodes) */}
+              {/* SNAP TO SCAN & Upload Photo Actions */}
               <div className="grid grid-cols-2 gap-2">
                 <button
                   type="button"
@@ -599,7 +699,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
                 </label>
               </div>
 
-              {/* Hardware Controls: Zoom & Torch (For small barcodes on sachets/candies) */}
+              {/* Hardware Controls: Zoom & Torch */}
               <div className="bg-slate-950/60 border border-slate-800 rounded-xl p-3 flex flex-wrap items-center justify-between gap-3">
                 {/* Zoom buttons */}
                 <div className="flex items-center gap-1.5">
@@ -642,10 +742,8 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
               </div>
 
               <div className="text-[11px] text-slate-400 leading-normal bg-slate-800/30 p-2.5 rounded-lg border border-slate-800/60">
-                <span className="font-semibold text-emerald-400">💡 Pro-Tip para sa maliit o makintab na pakete:</span>{' '}
-                Gamitin ang <strong className="text-white">"2x Zoom"</strong> o pindutin ang{' '}
-                <strong className="text-white">"Snap to Scan"</strong> para kumuha ng malinaw na litrato kahit makintab
-                ang foil o supot ng kape/sachet.
+                <span className="font-semibold text-emerald-400">💡 Mabilisang Scan:</span>{' '}
+                Isang tapat lang sa barcode, awtomatiko itong magbi-beep at idaragdag sa kaha nang walang paulit-ulit na pag-scan.
               </div>
             </div>
           ) : (

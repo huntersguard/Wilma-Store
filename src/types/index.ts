@@ -21,6 +21,15 @@ export interface CartItem {
 
 export type PaymentMethod = 'cash' | 'utang' | 'gcash' | 'maya';
 
+export interface CreditPayment {
+  id: string;
+  amount: number;
+  paymentDate: string; // ISO date string of payment
+  paymentMethod: 'cash' | 'gcash' | 'maya';
+  notes?: string;
+  isAdvance?: boolean;
+}
+
 export interface SaleTransaction {
   id: string;
   receiptNumber: string;
@@ -44,7 +53,10 @@ export interface SaleTransaction {
   customerName?: string;
   isCreditSettled?: boolean;
   creditSettledDate?: string;
+  amountPaid?: number; // Total amount paid towards this credit
+  payments?: CreditPayment[]; // History of payments with dates
   notes?: string;
+  isAdvanceDeposit?: boolean; // If this transaction is a customer advance payment/deposit
 }
 
 export interface StoreSettings {

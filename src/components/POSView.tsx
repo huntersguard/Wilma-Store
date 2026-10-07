@@ -1,7 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Product, CartItem, PaymentMethod, SaleTransaction } from '../types';
 import { CATEGORIES } from '../utils/sampleData';
 import { BarcodeScannerModal } from './BarcodeScannerModal';
+import {
+  getAllDebtorsSummary,
+  getCustomerCreditSummary,
+  CustomerDebtorSummary,
+} from '../utils/creditUtils';
 import {
   Camera,
   Search,
@@ -25,6 +30,8 @@ import {
   Check,
   Tag,
   ShoppingBag,
+  Calendar,
+  Wallet,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { playScanBeep, playCheckoutChime, playWarningSound } from '../utils/audio';
@@ -33,6 +40,7 @@ export type POSMode = 'catalog' | 'cashier' | 'split';
 
 interface POSViewProps {
   products: Product[];
+  sales: SaleTransaction[];
   cart: CartItem[];
   setCart: React.Dispatch<React.SetStateAction<CartItem[]>>;
   initialMode?: POSMode;
@@ -42,6 +50,7 @@ interface POSViewProps {
 
 export const POSView: React.FC<POSViewProps> = ({
   products,
+  sales,
   cart,
   setCart,
   initialMode = 'catalog',
@@ -63,8 +72,18 @@ export const POSView: React.FC<POSViewProps> = ({
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('cash');
   const [cashTendered, setCashTendered] = useState<number | ''>('');
   const [customerName, setCustomerName] = useState('');
+  const [creditDate, setCreditDate] = useState<string>(() => new Date().toISOString().slice(0, 16));
   const [checkoutNotes, setCheckoutNotes] = useState('');
   const [discount, setDiscount] = useState<number>(0);
+
+  // Existing customer debtor summary (if customer name is typed)
+  const existingDebtorSummary = useMemo(() => {
+    if (!customerName.trim() || paymentMethod !== 'utang') return null;
+    return getCustomerCreditSummary(sales, customerName.trim());
+  }, [customerName, paymentMethod, sales]);
+
+  // All debtors for autocomplete
+  const allDebtors = useMemo(() => getAllDebtorsSummary(sales), [sales]);
 
   // Success Receipt modal state
   const [lastCompletedSale, setLastCompletedSale] = useState<SaleTransaction | null>(null);
@@ -151,19 +170,30 @@ export const POSView: React.FC<POSViewProps> = ({
     }
   };
 
+  const lastScanProcessedTimeRef = useRef<number>(0);
+
   const handleBarcodeScanned = (scannedBarcode: string) => {
     setIsScannerOpen(false);
+    const clean = scannedBarcode.trim();
+    if (!clean) return;
+
+    const now = Date.now();
+    if (now - lastScanProcessedTimeRef.current < 1200) {
+      return; // Debounce guard against rapid bursts
+    }
+    lastScanProcessedTimeRef.current = now;
+
     const matched = products.find(
       (p) =>
-        p.barcode.toLowerCase() === scannedBarcode.toLowerCase() ||
-        p.barcode.replace(/[-\s]/g, '') === scannedBarcode.replace(/[-\s]/g, '')
+        p.barcode.toLowerCase() === clean.toLowerCase() ||
+        p.barcode.replace(/[-\s]/g, '') === clean.replace(/[-\s]/g, '')
     );
 
     if (matched) {
       addToCart(matched);
     } else {
       playWarningSound();
-      alert(`Hindi nahanap ang barcode "${scannedBarcode}". Pakitiyak na nakalista ito sa Imbentaryo.`);
+      alert(`Hindi nahanap ang barcode "${clean}". Pakitiyak na nakalista ito sa Imbentaryo.`);
     }
   };
 
@@ -194,7 +224,10 @@ export const POSView: React.FC<POSViewProps> = ({
     }));
 
     const salePayload = {
-      timestamp: new Date().toISOString(),
+      timestamp:
+        paymentMethod === 'utang' && creditDate
+          ? new Date(creditDate).toISOString()
+          : new Date().toISOString(),
       items: saleItems,
       subtotal,
       discount,
@@ -204,6 +237,8 @@ export const POSView: React.FC<POSViewProps> = ({
       paymentMethod,
       customerName: customerName.trim() || undefined,
       isCreditSettled: paymentMethod === 'utang' ? false : undefined,
+      amountPaid: 0,
+      payments: [],
       notes: checkoutNotes.trim() || undefined,
     };
 
@@ -229,6 +264,7 @@ export const POSView: React.FC<POSViewProps> = ({
     setDiscount(0);
     setCashTendered('');
     setCustomerName('');
+    setCreditDate(new Date().toISOString().slice(0, 16));
     setCheckoutNotes('');
   };
 
@@ -844,7 +880,23 @@ export const POSView: React.FC<POSViewProps> = ({
               </div>
             </div>
           ) : paymentMethod === 'utang' ? (
-            <div className="space-y-2.5 bg-amber-500/5 border border-amber-500/20 rounded-2xl p-3.5">
+            <div className="space-y-3 bg-amber-500/5 border border-amber-500/20 rounded-2xl p-3.5">
+              {/* Petsa ng Pagkautang (Date Incurred) */}
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-amber-300 flex items-center gap-1.5">
+                  <Calendar className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Petsa ng Utang (Date Incurred):</span>
+                </label>
+                <input
+                  type="datetime-local"
+                  required
+                  value={creditDate}
+                  onChange={(e) => setCreditDate(e.target.value)}
+                  className="w-full bg-slate-950 border border-amber-500/40 rounded-xl px-3.5 py-2 text-xs sm:text-sm text-white focus:outline-none focus:border-amber-400 font-mono"
+                />
+              </div>
+
+              {/* Pangalan ng Umutang with Autocomplete */}
               <div className="space-y-1">
                 <label className="text-xs font-bold text-amber-300">
                   Pangalan ng Umutang (Debtor Name) <span className="text-rose-400">*</span>
@@ -857,10 +909,73 @@ export const POSView: React.FC<POSViewProps> = ({
                   placeholder="Hal. Kapitbahay Boyet / Ate Wilma"
                   className="w-full bg-slate-950 border border-amber-500/40 rounded-xl px-3.5 py-2 text-xs sm:text-sm text-white focus:outline-none focus:border-amber-400"
                 />
+
+                {/* Suki Autocomplete Pills */}
+                {allDebtors.length > 0 && customerName.trim() && (
+                  <div className="flex flex-wrap gap-1.5 pt-1">
+                    {allDebtors
+                      .filter((d: CustomerDebtorSummary) =>
+                        d.customerName.toLowerCase().includes(customerName.toLowerCase())
+                      )
+                      .slice(0, 4)
+                      .map((d: CustomerDebtorSummary) => (
+                        <button
+                          key={d.customerName}
+                          type="button"
+                          onClick={() => setCustomerName(d.customerName)}
+                          className="px-2 py-0.5 rounded-lg bg-slate-900 border border-amber-500/30 text-[11px] text-amber-300 hover:bg-slate-800 flex items-center gap-1 transition-colors"
+                        >
+                          <span>{d.customerName}</span>
+                          <span className="font-mono text-[10px] text-slate-400">
+                            (May utang: ₱{d.netBalance.toFixed(0)})
+                          </span>
+                        </button>
+                      ))}
+                  </div>
+                )}
               </div>
+
+              {/* Dynamic Existing Balance Breakdown */}
+              {existingDebtorSummary && (existingDebtorSummary.netBalance > 0 || existingDebtorSummary.advanceDeposit > 0) && (
+                <div className="bg-slate-950/90 border border-amber-500/30 rounded-xl p-3 space-y-1.5 text-xs">
+                  <div className="flex justify-between text-slate-300">
+                    <span>Kasalukuyang Dating Utang:</span>
+                    <span className="font-mono font-bold text-amber-400">
+                      ₱{existingDebtorSummary.netBalance.toFixed(2)}
+                    </span>
+                  </div>
+
+                  {existingDebtorSummary.advanceDeposit > 0 && (
+                    <div className="flex justify-between text-teal-300 font-semibold">
+                      <span>May Paunang Pondo (Advance):</span>
+                      <span className="font-mono text-teal-400">
+                        -₱{existingDebtorSummary.advanceDeposit.toFixed(2)}
+                      </span>
+                    </div>
+                  )}
+
+                  <div className="flex justify-between text-slate-300">
+                    <span>Bagong Utang Ngayong Araw:</span>
+                    <span className="font-mono font-bold text-emerald-400">
+                      +₱{grandTotal.toFixed(2)}
+                    </span>
+                  </div>
+
+                  <div className="pt-1.5 border-t border-slate-800 flex justify-between font-bold text-white">
+                    <span>Kabuuang Utang Matapos Ito:</span>
+                    <span className="font-mono text-amber-400 text-sm">
+                      ₱{Math.max(
+                        0,
+                        existingDebtorSummary.netBalance + grandTotal - existingDebtorSummary.advanceDeposit
+                      ).toFixed(2)}
+                    </span>
+                  </div>
+                </div>
+              )}
+
               <p className="text-[11px] text-amber-300/80 leading-relaxed">
                 Awtomatikong itatala ito sa <strong>Talaan ng Utang</strong> para masubaybayan at
-                masingil sa susunod.
+                masingil sa susunod na may kumpletong petsa.
               </p>
             </div>
           ) : (

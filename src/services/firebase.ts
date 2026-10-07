@@ -207,16 +207,44 @@ export async function syncRecordSale(
 /**
  * Settle an utang transaction in Firestore
  */
-export async function syncSettleCredit(transactionId: string): Promise<void> {
+export async function syncSettleCredit(
+  transactionId: string,
+  settledDate: string = new Date().toISOString()
+): Promise<void> {
   const saleRef = doc(db, 'sales', transactionId);
   await setDoc(
     saleRef,
     {
       isCreditSettled: true,
-      creditSettledDate: new Date().toISOString(),
+      creditSettledDate: settledDate,
     },
     { merge: true }
   );
+}
+
+/**
+ * Update any fields on a sale or credit transaction in Firestore
+ */
+export async function syncUpdateSaleTransaction(
+  transactionId: string,
+  updates: Partial<SaleTransaction>
+): Promise<void> {
+  const saleRef = doc(db, 'sales', transactionId);
+  await setDoc(saleRef, updates, { merge: true });
+}
+
+/**
+ * Batch update multiple sales transactions in Firestore
+ */
+export async function syncBatchUpdateSales(
+  transactions: SaleTransaction[]
+): Promise<void> {
+  const batch = writeBatch(db);
+  transactions.forEach((tx) => {
+    const sRef = doc(db, 'sales', tx.id);
+    batch.set(sRef, tx, { merge: true });
+  });
+  await batch.commit();
 }
 
 /**

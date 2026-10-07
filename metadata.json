@@ -1,6 +1,10 @@
 {
   "name": "Tindahan POS - Sari-Sari Store Inventory & Scanner",
   "description": "Smart Point of Sale, inventory tracker, price checker, and camera barcode scanner tailored for Philippine sari-sari stores.",
-  "requestFramePermissions": ["camera"],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
 }

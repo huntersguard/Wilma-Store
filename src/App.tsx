@@ -21,8 +21,11 @@ import {
   syncDeleteProduct,
   syncRecordSale,
   syncSettleCredit,
+  syncUpdateSaleTransaction,
+  syncBatchUpdateSales,
   syncSaveSettings,
 } from './services/firebase';
+import { applyPaymentToDebts } from './utils/creditUtils';
 import { POSView, POSMode } from './components/POSView';
 import { InventoryView } from './components/InventoryView';
 import { LowStockAlertsView } from './components/LowStockAlertsView';
@@ -222,25 +225,51 @@ export default function App() {
     }
   };
 
-  // Settle credit from Utang ledger
-  const handleSettleCredit = async (transactionId: string) => {
-    const updatedSales = sales.map((s) => {
-      if (s.id === transactionId) {
-        return {
-          ...s,
-          isCreditSettled: true,
-          creditSettledDate: new Date().toISOString(),
-        };
-      }
-      return s;
-    });
+  // Record Payment / Hulog / Advance Payment for a customer in Utang ledger
+  const handleRecordCustomerPayment = async (
+    customerName: string,
+    paymentAmount: number,
+    paymentDate: string,
+    paymentMethod: 'cash' | 'gcash' | 'maya',
+    notes?: string
+  ) => {
+    const { updatedSales } = applyPaymentToDebts(
+      sales,
+      customerName,
+      paymentAmount,
+      paymentDate,
+      paymentMethod,
+      notes
+    );
+
     setSales(updatedSales);
     saveStoredSales(updatedSales);
 
     try {
-      await syncSettleCredit(transactionId);
+      await syncBatchUpdateSales(updatedSales);
     } catch (err) {
-      console.warn('Cloud sync settle credit fallback:', err);
+      console.warn('Cloud sync payment fallback:', err);
+    }
+  };
+
+  // Add Direct Credit or Advance Deposit from Utang ledger
+  const handleAddDirectCredit = async (
+    creditData: Omit<SaleTransaction, 'id' | 'receiptNumber'>
+  ) => {
+    const newTransaction: SaleTransaction = {
+      ...creditData,
+      id: `credit-${Date.now()}`,
+      receiptNumber: `UTG-${Date.now().toString().slice(-6)}`,
+    };
+
+    const updatedSales = [newTransaction, ...sales];
+    setSales(updatedSales);
+    saveStoredSales(updatedSales);
+
+    try {
+      await syncRecordSale(newTransaction, products);
+    } catch (err) {
+      console.warn('Cloud sync add direct credit fallback:', err);
     }
   };
 
@@ -498,6 +527,7 @@ export default function App() {
         {activeTab === 'pos' && (
           <POSView
             products={products}
+            sales={sales}
             cart={cart}
             setCart={setCart}
             initialMode={posInitialMode}
@@ -528,7 +558,11 @@ export default function App() {
         )}
 
         {activeTab === 'utang' && (
-          <UtangLedgerView sales={sales} onSettleCredit={handleSettleCredit} />
+          <UtangLedgerView
+            sales={sales}
+            onRecordPayment={handleRecordCustomerPayment}
+            onAddDirectCredit={handleAddDirectCredit}
+          />
         )}
 
         {activeTab === 'sales' && <SalesHistoryView sales={sales} />}
