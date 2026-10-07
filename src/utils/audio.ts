@@ -16,11 +16,21 @@ function getAudioContext(): AudioContext | null {
   return audioCtx;
 }
 
+let lastBeepTime = 0;
+let lastHapticTime = 0;
+
 /**
  * High-pitch crisp barcode scanner chirp (resembles retail laser scanner)
+ * Protected with strict debounce to prevent rapid clicking/buzzing audio loops
  */
 export function playScanBeep() {
   try {
+    const now = Date.now();
+    if (now - lastBeepTime < 800) {
+      return; // Prevent machine-gun rapid beeps
+    }
+    lastBeepTime = now;
+
     const ctx = getAudioContext();
     if (!ctx) return;
 
@@ -112,9 +122,15 @@ export function playWarningSound() {
 }
 
 /**
- * Device vibration fallback
+ * Device vibration fallback with debounce guard
  */
 export function triggerHaptic(pattern: number[] = [50]) {
+  const now = Date.now();
+  if (now - lastHapticTime < 800) {
+    return; // Prevent vibration buzz loops
+  }
+  lastHapticTime = now;
+
   if (typeof window !== 'undefined' && 'navigator' in window && navigator.vibrate) {
     try {
       navigator.vibrate(pattern);

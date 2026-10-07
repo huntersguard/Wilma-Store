@@ -431,12 +431,55 @@ export const UtangLedgerView: React.FC<UtangLedgerViewProps> = ({
       {activeTab === 'customers' && (
         <div className="space-y-3">
           {filteredDebtors.length === 0 ? (
-            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-12 text-center space-y-3">
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-8 sm:p-12 text-center space-y-4">
               <Users className="w-10 h-10 text-slate-600 mx-auto" />
-              <p className="text-sm font-semibold text-slate-300">Walang nahanap na customer sa listahan.</p>
-              <p className="text-xs text-slate-500 max-w-sm mx-auto">
-                Pindutin ang <strong>"+ Bagong Utang"</strong> sa itaas o piliin ang Utang sa POS checkout para magtala ng bagong pautang.
-              </p>
+              <div>
+                <p className="text-sm sm:text-base font-semibold text-white">
+                  {search.trim()
+                    ? `Walang nahanap na "${search}" sa talaan ng utang.`
+                    : 'Walang nahanap na customer sa listahan.'}
+                </p>
+                <p className="text-xs text-slate-400 mt-1 max-w-md mx-auto">
+                  {search.trim()
+                    ? `Maaari mong itala agad si "${search}" bilang bagong may utang o magtala ng paunang bayad (advance).`
+                    : 'Pindutin ang "+ Bagong Utang" sa itaas o pumili ng Utang sa POS checkout para magtala ng pautang.'}
+                </p>
+              </div>
+
+              {search.trim() ? (
+                <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setNewCreditName(search.trim());
+                      setNewCreditAmount('');
+                      setNewCreditDate(new Date().toISOString().slice(0, 16));
+                      setNewCreditItems('');
+                      setNewCreditNotes('');
+                      setIsNewCreditModalOpen(true);
+                    }}
+                    className="px-4 py-2.5 bg-amber-600 hover:bg-amber-500 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-md transition-all active:scale-95"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>+ Magtala ng Utang para kay "{search.trim()}"</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAdvanceName(search.trim());
+                      setAdvanceAmount('');
+                      setAdvanceDate(new Date().toISOString().slice(0, 16));
+                      setAdvanceNotes('');
+                      setIsAdvanceModalOpen(true);
+                    }}
+                    className="px-4 py-2.5 bg-teal-600 hover:bg-teal-500 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-md transition-all active:scale-95"
+                  >
+                    <Wallet className="w-4 h-4" />
+                    <span>+ Magtala ng Advance para kay "{search.trim()}"</span>
+                  </button>
+                </div>
+              ) : null}
             </div>
           ) : (
             filteredDebtors.map((debtor) => {
@@ -458,6 +501,7 @@ export const UtangLedgerView: React.FC<UtangLedgerViewProps> = ({
                       <h3 className="font-extrabold text-white text-base sm:text-lg">
                         {debtor.customerName}
                       </h3>
+
                       {hasDebt ? (
                         <span className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-300 bg-amber-500/15 px-2.5 py-0.5 rounded-full border border-amber-500/30">
                           <Clock className="w-3 h-3" /> May Balanse: ₱{debtor.netBalance.toFixed(2)}
@@ -558,30 +602,69 @@ export const UtangLedgerView: React.FC<UtangLedgerViewProps> = ({
                       </span>
                     </div>
 
-                    <div className="flex items-center gap-2">
-                      {/* View Statement History Button */}
+                    {/* Action buttons on Customer Card */}
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {/* Add to Existing Utang Button */}
                       <button
                         type="button"
-                        onClick={() => setHistoryModalCustomer(debtor)}
-                        className="px-3 py-2 bg-slate-800 hover:bg-slate-750 text-slate-200 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors"
-                        title="Tingnan ang kumpletong talaan ng utang at mga bayad"
+                        onClick={() => {
+                          setNewCreditName(debtor.customerName);
+                          setNewCreditAmount('');
+                          setNewCreditDate(new Date().toISOString().slice(0, 16));
+                          setNewCreditItems('');
+                          setNewCreditNotes('');
+                          setIsNewCreditModalOpen(true);
+                        }}
+                        className="px-2.5 sm:px-3 py-2 bg-amber-600/20 hover:bg-amber-600/30 text-amber-300 border border-amber-500/30 rounded-xl text-xs font-bold flex items-center gap-1 transition-all active:scale-95"
+                        title="Magdagdag ng bagong inutang sa customer na ito"
                       >
-                        <History className="w-3.5 h-3.5 text-slate-400" />
-                        <span>Kasaysayan</span>
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>+ Dagdag Utang</span>
                       </button>
 
                       {/* Pay / Hulog Button */}
                       <button
                         type="button"
                         onClick={() => handleOpenPaymentModal(debtor)}
-                        className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-md transition-all active:scale-95 ${
+                        className={`px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-md transition-all active:scale-95 ${
                           hasDebt
                             ? 'bg-emerald-600 hover:bg-emerald-500 text-white'
                             : 'bg-teal-600 hover:bg-teal-500 text-white'
                         }`}
+                        title="Magtala ng ibinayad o hulog na may petsa"
                       >
-                        <Banknote className="w-4 h-4" />
-                        <span>{hasDebt ? 'Magbayad / Maghulog' : '+ Mag-Advance'}</span>
+                        <Banknote className="w-3.5 h-3.5" />
+                        <span>{hasDebt ? 'Magbayad' : '+ Advance'}</span>
+                      </button>
+
+                      {/* Advance Button (if has debt, still allow advance deposit) */}
+                      {hasDebt && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setAdvanceName(debtor.customerName);
+                            setAdvanceAmount('');
+                            setAdvanceDate(new Date().toISOString().slice(0, 16));
+                            setAdvanceNotes('');
+                            setIsAdvanceModalOpen(true);
+                          }}
+                          className="px-2 py-2 bg-slate-800 hover:bg-slate-700 text-teal-300 rounded-xl text-xs font-medium flex items-center gap-1 transition-colors"
+                          title="Magtala ng Paunang Pondo o Advance Deposit"
+                        >
+                          <Wallet className="w-3.5 h-3.5" />
+                          <span className="hidden sm:inline">Advance</span>
+                        </button>
+                      )}
+
+                      {/* View Statement History Button */}
+                      <button
+                        type="button"
+                        onClick={() => setHistoryModalCustomer(debtor)}
+                        className="px-2.5 py-2 bg-slate-800 hover:bg-slate-750 text-slate-200 rounded-xl text-xs font-semibold flex items-center gap-1 transition-colors"
+                        title="Tingnan ang kumpletong talaan ng utang at mga bayad"
+                      >
+                        <History className="w-3.5 h-3.5 text-slate-400" />
+                        <span className="hidden sm:inline">Kasaysayan</span>
                       </button>
                     </div>
                   </div>
@@ -1059,6 +1142,50 @@ export const UtangLedgerView: React.FC<UtangLedgerViewProps> = ({
                     className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-8 pr-4 py-2.5 text-base font-bold text-white font-mono focus:outline-none focus:border-amber-500"
                   />
                 </div>
+
+                {/* Existing Debt + Added Credit Breakdown */}
+                {(() => {
+                  const matchedDebtor = debtors.find(
+                    (d) => d.customerName.toLowerCase() === newCreditName.trim().toLowerCase()
+                  );
+                  if (!matchedDebtor) return null;
+                  const addedAmount =
+                    typeof newCreditAmount === 'number'
+                      ? newCreditAmount
+                      : parseFloat(newCreditAmount) || 0;
+                  const newTotalBalance = matchedDebtor.netBalance + addedAmount;
+
+                  return (
+                    <div className="bg-slate-950 border border-amber-500/30 rounded-xl p-3 space-y-1.5 text-xs">
+                      <div className="flex justify-between text-slate-300">
+                        <span>Dating Utang ni {matchedDebtor.customerName}:</span>
+                        <span className="font-mono font-bold text-amber-400">
+                          ₱{matchedDebtor.netBalance.toFixed(2)}
+                        </span>
+                      </div>
+                      {matchedDebtor.advanceDeposit > 0 && (
+                        <div className="flex justify-between text-teal-300 font-semibold">
+                          <span>May Paunang Pondo (Advance):</span>
+                          <span className="font-mono text-teal-400">
+                            -₱{matchedDebtor.advanceDeposit.toFixed(2)}
+                          </span>
+                        </div>
+                      )}
+                      <div className="flex justify-between text-slate-300">
+                        <span>Idaragdag na Bagong Utang:</span>
+                        <span className="font-mono font-bold text-emerald-400">
+                          +₱{addedAmount.toFixed(2)}
+                        </span>
+                      </div>
+                      <div className="pt-1.5 border-t border-slate-800 flex justify-between font-bold text-white">
+                        <span>Magiging Kabuuang Utang:</span>
+                        <span className="font-mono text-amber-400 text-sm">
+                          ₱{Math.max(0, newTotalBalance - matchedDebtor.advanceDeposit).toFixed(2)}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
 
               {/* Items inutang */}
@@ -1145,6 +1272,32 @@ export const UtangLedgerView: React.FC<UtangLedgerViewProps> = ({
                   placeholder="Hal. Ate Marites"
                   className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2 text-xs sm:text-sm text-white focus:outline-none focus:border-teal-500"
                 />
+
+                {/* Autocomplete Suggestions from Existing Debtors */}
+                {advanceName.trim() && (
+                  <div className="flex flex-wrap gap-1.5 pt-1">
+                    {debtors
+                      .filter((d) =>
+                        d.customerName.toLowerCase().includes(advanceName.toLowerCase())
+                      )
+                      .slice(0, 4)
+                      .map((d) => (
+                        <button
+                          key={d.customerName}
+                          type="button"
+                          onClick={() => setAdvanceName(d.customerName)}
+                          className="px-2 py-1 rounded-lg bg-slate-950 border border-slate-800 hover:border-teal-500 text-[11px] text-slate-300 flex items-center gap-1"
+                        >
+                          <span>{d.customerName}</span>
+                          <span className="font-mono text-teal-400">
+                            {d.netBalance > 0
+                              ? `(May utang: ₱${d.netBalance.toFixed(0)})`
+                              : `(Pondo: ₱${d.advanceDeposit.toFixed(0)})`}
+                          </span>
+                        </button>
+                      ))}
+                  </div>
+                )}
               </div>
 
               <div className="space-y-1">
@@ -1175,6 +1328,61 @@ export const UtangLedgerView: React.FC<UtangLedgerViewProps> = ({
                   placeholder="0.00"
                   className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2 text-base font-bold text-white font-mono focus:outline-none focus:border-teal-500"
                 />
+
+                {/* Advance Offset Calculation Preview */}
+                {(() => {
+                  const matchedDebtor = debtors.find(
+                    (d) => d.customerName.toLowerCase() === advanceName.trim().toLowerCase()
+                  );
+                  const advAmt =
+                    typeof advanceAmount === 'number'
+                      ? advanceAmount
+                      : parseFloat(advanceAmount) || 0;
+                  if (!advAmt || advAmt <= 0) return null;
+
+                  if (matchedDebtor && matchedDebtor.netBalance > 0) {
+                    const remainingDebt = Math.max(0, matchedDebtor.netBalance - advAmt);
+                    const excessAdvance = Math.max(0, advAmt - matchedDebtor.netBalance);
+
+                    return (
+                      <div className="bg-slate-950 border border-teal-500/30 rounded-xl p-3 space-y-1 text-xs mt-1.5">
+                        <div className="flex justify-between text-slate-300">
+                          <span>Kasalukuyang Utang ni {matchedDebtor.customerName}:</span>
+                          <span className="font-mono text-amber-400 font-bold">
+                            ₱{matchedDebtor.netBalance.toFixed(2)}
+                          </span>
+                        </div>
+                        <div className="flex justify-between text-teal-300 font-semibold">
+                          <span>Ibabawas mula sa Paunang Bayad:</span>
+                          <span className="font-mono">
+                            -₱{Math.min(advAmt, matchedDebtor.netBalance).toFixed(2)}
+                          </span>
+                        </div>
+                        {remainingDebt > 0 ? (
+                          <div className="pt-1 border-t border-slate-800 flex justify-between font-bold text-amber-400">
+                            <span>Matitirang Utang:</span>
+                            <span className="font-mono">₱{remainingDebt.toFixed(2)}</span>
+                          </div>
+                        ) : (
+                          <div className="pt-1 border-t border-slate-800 flex justify-between font-bold text-emerald-400">
+                            <span>Utang: Bayad Buo! May Sobrang Pondo:</span>
+                            <span className="font-mono text-teal-400">₱{excessAdvance.toFixed(2)}</span>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div className="bg-slate-950 border border-teal-500/30 rounded-xl p-2.5 text-xs text-teal-300 mt-1.5 flex items-center gap-1.5">
+                      <Sparkles className="w-3.5 h-3.5 text-teal-400 shrink-0" />
+                      <span>
+                        Itatala bilang <strong>₱{advAmt.toFixed(2)} Paunang Pondo</strong> na awtomatikong
+                        ibabawas sa mga kukunin paninda.
+                      </span>
+                    </div>
+                  );
+                })()}
               </div>
 
               <div className="space-y-1">

@@ -30,6 +30,32 @@ declare global {
   }
 }
 
+// Module-level anti-burst cooldown: minimum 2.5 seconds between any barcode scans
+let globalLastScannedTimestamp = 0;
+
+/**
+ * Forcefully stop and release all video stream tracks across the browser DOM
+ */
+export function killAllVideoTracks() {
+  try {
+    if (typeof document !== 'undefined') {
+      document.querySelectorAll('video').forEach((v) => {
+        try {
+          v.pause();
+          const st = v.srcObject as MediaStream | null;
+          if (st && typeof st.getTracks === 'function') {
+            st.getTracks().forEach((track) => {
+              track.enabled = false;
+              track.stop();
+            });
+          }
+          v.srcObject = null;
+        } catch {}
+      });
+    }
+  } catch {}
+}
+
 export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
   isOpen,
   onClose,
@@ -99,16 +125,24 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
     const cleanText = decodedText.trim();
     if (!cleanText) return;
 
+    // Strict guard: ensure minimum 2000ms delay between scans across the application
+    const now = Date.now();
+    if (now - globalLastScannedTimestamp < 2000) {
+      return;
+    }
+
     // Strict guard: ensure we only ever fire ONCE per open session
     if (hasEmittedScanRef.current || !isScannerActiveRef.current) {
       return;
     }
 
+    globalLastScannedTimestamp = now;
     hasEmittedScanRef.current = true;
     isScannerActiveRef.current = false;
     scanSessionIdRef.current = 0;
 
-    // Immediately stop camera and kill all loops
+    // Immediately stop camera and kill all loops & hardware tracks
+    killAllVideoTracks();
     stopCamera();
 
     setLastScannedCode(cleanText);
@@ -335,6 +369,9 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
     isScannerActiveRef.current = false;
     scanSessionIdRef.current = 0;
 
+    // Immediately stop and disable all video tracks across the document
+    killAllVideoTracks();
+
     if (animationFrameRef.current) {
       cancelAnimationFrame(animationFrameRef.current);
       animationFrameRef.current = null;
@@ -343,6 +380,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((track) => {
         try {
+          track.enabled = false;
           track.stop();
         } catch {}
       });
@@ -367,7 +405,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
         }
         await qrInstance.clear();
       } catch (err) {
-        console.warn('Html5Qrcode cleanup warning:', err);
+        // Ignored safe cleanup error if container was already unmounted
       }
     }
 

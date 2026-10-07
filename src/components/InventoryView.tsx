@@ -31,7 +31,7 @@ interface InventoryViewProps {
   onQuickAdjustStock: (productId: string, delta: number) => void;
   onExportBackup: () => void;
   onImportBackup: (json: string) => void;
-  onResetDefaults: () => void;
+  onResetDefaults?: () => void;
 }
 
 export const InventoryView: React.FC<InventoryViewProps> = ({
@@ -42,7 +42,6 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
   onQuickAdjustStock,
   onExportBackup,
   onImportBackup,
-  onResetDefaults,
 }) => {
   const [search, setSearch] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('All Items');
@@ -295,14 +294,6 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
               <span className="hidden sm:inline">Import</span>
               <input type="file" accept=".json" onChange={handleFileImport} className="hidden" />
             </label>
-
-            <button
-              onClick={onResetDefaults}
-              className="p-2.5 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white rounded-xl text-xs transition-colors shrink-0"
-              title="Ibalik sa Sample Sari-Sari Data"
-            >
-              <RefreshCw className="w-3.5 h-3.5" />
-            </button>
           </div>
         </div>
 

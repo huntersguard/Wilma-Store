@@ -120,7 +120,7 @@ export const POSView: React.FC<POSViewProps> = ({
   };
 
   // Add product to cart
-  const addToCart = (product: Product, bypassWarning = false) => {
+  const addToCart = (product: Product, bypassWarning = false, suppressBeep = false) => {
     if (product.stock <= 0 && !bypassWarning) {
       playWarningSound();
       setOutOfStockPromptProduct(product);
@@ -138,7 +138,9 @@ export const POSView: React.FC<POSViewProps> = ({
       }
     });
 
-    playScanBeep();
+    if (!suppressBeep) {
+      playScanBeep();
+    }
     showToast(`✓ Naidagdag: ${product.name} (₱${product.sellingPrice.toFixed(2)})`);
   };
 
@@ -178,8 +180,8 @@ export const POSView: React.FC<POSViewProps> = ({
     if (!clean) return;
 
     const now = Date.now();
-    if (now - lastScanProcessedTimeRef.current < 1200) {
-      return; // Debounce guard against rapid bursts
+    if (now - lastScanProcessedTimeRef.current < 2000) {
+      return; // 2-second debounce guard against rapid bursts
     }
     lastScanProcessedTimeRef.current = now;
 
@@ -190,7 +192,8 @@ export const POSView: React.FC<POSViewProps> = ({
     );
 
     if (matched) {
-      addToCart(matched);
+      // suppressBeep=true because scanner already sounded the beep
+      addToCart(matched, false, true);
     } else {
       playWarningSound();
       alert(`Hindi nahanap ang barcode "${clean}". Pakitiyak na nakalista ito sa Imbentaryo.`);
