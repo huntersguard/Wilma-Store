@@ -350,8 +350,7 @@ export const INITIAL_PRODUCTS: Product[] = [
   },
 ];
 
-export const CATEGORIES = [
-  'All Items',
+export const DEFAULT_CATEGORIES = [
   'Instant Noodles & Soups',
   'Coffee & Beverages',
   'Canned Goods & Condiments',
@@ -360,4 +359,9 @@ export const CATEGORIES = [
   'Laundry & Household',
   'Rice & Cooking Staples',
   'Cigarettes & Candies',
+];
+
+export const CATEGORIES = [
+  'All Items',
+  ...DEFAULT_CATEGORIES,
 ];

@@ -34,6 +34,8 @@ import { SalesHistoryView } from './components/SalesHistoryView';
 import { PriceCheckerModal } from './components/PriceCheckerModal';
 import { BarcodeScannerModal } from './components/BarcodeScannerModal';
 import { InstallPhoneModal } from './components/InstallPhoneModal';
+import { ManageCategoriesModal } from './components/ManageCategoriesModal';
+import { DEFAULT_CATEGORIES } from './utils/sampleData';
 import {
   Store,
   ShoppingCart,
@@ -52,6 +54,7 @@ import {
   Cloud,
   CheckCircle2,
   X,
+  Layers,
 } from 'lucide-react';
 import { playScanBeep, playWarningSound } from './utils/audio';
 
@@ -71,6 +74,7 @@ export default function App() {
   const [isGlobalScannerOpen, setIsGlobalScannerOpen] = useState(false);
   const [isPhoneModalOpen, setIsPhoneModalOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
   const [isSoundEnabled, setIsSoundEnabled] = useState(true);
 
   // Setup real-time Firebase multi-phone synchronization
@@ -313,6 +317,100 @@ export default function App() {
     setIsPriceCheckerOpen(true);
   };
 
+  // Dynamic Category Management
+  const activeCategories = React.useMemo(() => {
+    const base =
+      settings.customCategories && settings.customCategories.length > 0
+        ? settings.customCategories
+        : DEFAULT_CATEGORIES;
+    const productCats = Array.from(new Set(products.map((p) => p.category).filter(Boolean)));
+    return Array.from(new Set([...base, ...productCats]));
+  }, [settings.customCategories, products]);
+
+  const handleRenameCategory = async (oldName: string, newName: string) => {
+    const trimmedNew = newName.trim();
+    if (!trimmedNew || oldName === trimmedNew) return;
+
+    const currentCats = activeCategories;
+    const nextCats = currentCats.map((c) => (c === oldName ? trimmedNew : c));
+    if (!nextCats.includes(trimmedNew)) {
+      nextCats.push(trimmedNew);
+    }
+    const nextSettings: StoreSettings = { ...settings, customCategories: nextCats };
+    setSettings(nextSettings);
+    saveStoredSettings(nextSettings);
+    syncSaveSettings(nextSettings).catch(() => {});
+
+    // Update all affected products with this category
+    const affected = products.filter((p) => p.category === oldName);
+    if (affected.length > 0) {
+      const updatedProducts = products.map((p) =>
+        p.category === oldName
+          ? { ...p, category: trimmedNew, updatedAt: new Date().toISOString() }
+          : p
+      );
+      setProducts(updatedProducts);
+      saveStoredProducts(updatedProducts);
+      for (const p of affected) {
+        syncSaveProduct({
+          ...p,
+          category: trimmedNew,
+          updatedAt: new Date().toISOString(),
+        }).catch(() => {});
+      }
+    }
+  };
+
+  const handleAddCategory = async (newCatName: string) => {
+    const clean = newCatName.trim();
+    if (!clean) return;
+    const currentCats = activeCategories;
+    if (currentCats.some((c) => c.toLowerCase() === clean.toLowerCase())) return;
+    const nextCats = [...currentCats, clean];
+    const nextSettings: StoreSettings = { ...settings, customCategories: nextCats };
+    setSettings(nextSettings);
+    saveStoredSettings(nextSettings);
+    syncSaveSettings(nextSettings).catch(() => {});
+  };
+
+  const handleDeleteCategory = async (catToDelete: string, fallback = 'Iba pa (General)') => {
+    const currentCats = activeCategories;
+    const nextCats = currentCats.filter((c) => c !== catToDelete);
+    if (!nextCats.includes(fallback)) {
+      nextCats.push(fallback);
+    }
+    const nextSettings: StoreSettings = { ...settings, customCategories: nextCats };
+    setSettings(nextSettings);
+    saveStoredSettings(nextSettings);
+    syncSaveSettings(nextSettings).catch(() => {});
+
+    // Reassign affected products
+    const affected = products.filter((p) => p.category === catToDelete);
+    if (affected.length > 0) {
+      const updatedProducts = products.map((p) =>
+        p.category === catToDelete
+          ? { ...p, category: fallback, updatedAt: new Date().toISOString() }
+          : p
+      );
+      setProducts(updatedProducts);
+      saveStoredProducts(updatedProducts);
+      for (const p of affected) {
+        syncSaveProduct({
+          ...p,
+          category: fallback,
+          updatedAt: new Date().toISOString(),
+        }).catch(() => {});
+      }
+    }
+  };
+
+  const handleResetDefaultCategories = async () => {
+    const nextSettings: StoreSettings = { ...settings, customCategories: DEFAULT_CATEGORIES };
+    setSettings(nextSettings);
+    saveStoredSettings(nextSettings);
+    syncSaveSettings(nextSettings).catch(() => {});
+  };
+
   // Low stock counter
   const lowStockCount = products.filter((p) => p.stock <= p.minStock).length;
   const unpaidUtangCount = sales.filter((s) => s.paymentMethod === 'utang' && !s.isCreditSettled).length;
@@ -533,6 +631,8 @@ export default function App() {
             initialMode={posInitialMode}
             onCompleteSale={handleCompleteSale}
             onOpenPriceChecker={() => setIsPriceCheckerOpen(true)}
+            categories={activeCategories}
+            onOpenManageCategories={() => setIsCategoryModalOpen(true)}
           />
         )}
 
@@ -545,7 +645,8 @@ export default function App() {
             onQuickAdjustStock={handleQuickAdjustStock}
             onExportBackup={handleExportBackup}
             onImportBackup={handleImportBackup}
-            onResetDefaults={handleResetDefaults}
+            categories={activeCategories}
+            onOpenManageCategories={() => setIsCategoryModalOpen(true)}
           />
         )}
 
@@ -652,6 +753,25 @@ export default function App() {
                 />
               </div>
 
+              {/* Category Management */}
+              <div className="pt-2 border-t border-slate-800 space-y-2">
+                <span className="font-semibold text-slate-300 block">Mga Kategorya ng Paninda:</span>
+                <p className="text-[11px] text-slate-400">
+                  Palitan ang pangalan (rename), magdagdag, o magbura ng mga kategorya.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsSettingsOpen(false);
+                    setIsCategoryModalOpen(true);
+                  }}
+                  className="w-full py-2 px-3 bg-slate-800 hover:bg-slate-750 text-emerald-400 border border-slate-700 rounded-xl font-semibold flex items-center justify-center gap-1.5 transition-colors text-xs"
+                >
+                  <Layers className="w-3.5 h-3.5" />
+                  <span>I-edit ang mga Kategorya (Categories)</span>
+                </button>
+              </div>
+
               {/* Backup & Export */}
               <div className="pt-2 border-t border-slate-800 space-y-2">
                 <span className="font-semibold text-slate-300 block">Backup & I-save ang Data:</span>
@@ -684,6 +804,18 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* Manage Categories Modal */}
+      <ManageCategoriesModal
+        isOpen={isCategoryModalOpen}
+        onClose={() => setIsCategoryModalOpen(false)}
+        categories={activeCategories}
+        products={products}
+        onAddCategory={handleAddCategory}
+        onRenameCategory={handleRenameCategory}
+        onDeleteCategory={handleDeleteCategory}
+        onResetDefaultCategories={handleResetDefaultCategories}
+      />
     </div>
   );
 }

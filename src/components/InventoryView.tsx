@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Product } from '../types';
-import { CATEGORIES } from '../utils/sampleData';
+import { DEFAULT_CATEGORIES } from '../utils/sampleData';
 import { BarcodeScannerModal } from './BarcodeScannerModal';
 import {
   Plus,
@@ -20,6 +20,7 @@ import {
   FileSpreadsheet,
   Package,
   Image as ImageIcon,
+  Layers,
 } from 'lucide-react';
 import { playScanBeep } from '../utils/audio';
 
@@ -32,6 +33,8 @@ interface InventoryViewProps {
   onExportBackup: () => void;
   onImportBackup: (json: string) => void;
   onResetDefaults?: () => void;
+  categories?: string[];
+  onOpenManageCategories?: () => void;
 }
 
 export const InventoryView: React.FC<InventoryViewProps> = ({
@@ -42,6 +45,8 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
   onQuickAdjustStock,
   onExportBackup,
   onImportBackup,
+  categories = DEFAULT_CATEGORIES,
+  onOpenManageCategories,
 }) => {
   const [search, setSearch] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('All Items');
@@ -91,7 +96,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
     setFormData({
       name: '',
       barcode: '',
-      category: 'Instant Noodles & Soups',
+      category: categories[0] || 'General',
       unit: 'pack',
       costPrice: 10,
       sellingPrice: 13,
@@ -341,7 +346,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
             </button>
           </div>
 
-          {/* Category Dropdown */}
+          {/* Category Dropdown & Manage Button */}
           <div className="md:ml-auto flex items-center gap-2">
             <span className="text-xs text-slate-500 shrink-0">Kategorya:</span>
             <select
@@ -349,12 +354,24 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
               onChange={(e) => setSelectedCategory(e.target.value)}
               className="bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1 text-xs text-white focus:outline-none focus:border-emerald-500"
             >
-              {CATEGORIES.map((cat) => (
+              {['All Items', ...categories].map((cat) => (
                 <option key={cat} value={cat}>
                   {cat}
                 </option>
               ))}
             </select>
+
+            {onOpenManageCategories && (
+              <button
+                type="button"
+                onClick={onOpenManageCategories}
+                className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-emerald-400 border border-slate-700 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors shrink-0"
+                title="Palitan ang pangalan, magdagdag o magbura ng mga kategorya"
+              >
+                <Layers className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">I-edit ang Kategorya</span>
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -651,17 +668,32 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
               {/* Category & Unit */}
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1">
-                  <label className="text-xs font-medium text-slate-300">Kategorya</label>
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-medium text-slate-300">Kategorya</label>
+                    {onOpenManageCategories && (
+                      <button
+                        type="button"
+                        onClick={onOpenManageCategories}
+                        className="text-[10px] text-emerald-400 hover:underline flex items-center gap-0.5"
+                      >
+                        <Edit2 className="w-2.5 h-2.5" />
+                        <span>I-edit</span>
+                      </button>
+                    )}
+                  </div>
                   <select
                     value={formData.category}
                     onChange={(e) => setFormData({ ...formData, category: e.target.value })}
                     className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500"
                   >
-                    {CATEGORIES.filter((c) => c !== 'All Items').map((c) => (
+                    {categories.map((c) => (
                       <option key={c} value={c}>
                         {c}
                       </option>
                     ))}
+                    {!categories.includes(formData.category) && formData.category && (
+                      <option value={formData.category}>{formData.category}</option>
+                    )}
                   </select>
                 </div>
 

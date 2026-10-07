@@ -68,4 +68,5 @@ export interface StoreSettings {
   enableScanBeep: boolean;
   enableLowStockSound: boolean;
   defaultLowStockThreshold: number;
+  customCategories?: string[];
 }

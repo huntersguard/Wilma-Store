@@ -46,6 +46,8 @@ interface POSViewProps {
   initialMode?: POSMode;
   onCompleteSale: (sale: Omit<SaleTransaction, 'id' | 'receiptNumber'>) => void;
   onOpenPriceChecker: () => void;
+  categories?: string[];
+  onOpenManageCategories?: () => void;
 }
 
 export const POSView: React.FC<POSViewProps> = ({
@@ -56,6 +58,8 @@ export const POSView: React.FC<POSViewProps> = ({
   initialMode = 'catalog',
   onCompleteSale,
   onOpenPriceChecker,
+  categories,
+  onOpenManageCategories,
 }) => {
   const [posMode, setPosMode] = useState<POSMode>(initialMode);
   const [search, setSearch] = useState('');
@@ -317,7 +321,7 @@ export const POSView: React.FC<POSViewProps> = ({
 
         {/* Category Filter Chips */}
         <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
-          {CATEGORIES.map((cat) => {
+          {['All Items', ...(categories && categories.length > 0 ? categories : CATEGORIES.filter((c) => c !== 'All Items'))].map((cat) => {
             const isSelected = selectedCategory === cat;
             const count =
               cat === 'All Items'
@@ -346,6 +350,18 @@ export const POSView: React.FC<POSViewProps> = ({
               </button>
             );
           })}
+
+          {onOpenManageCategories && (
+            <button
+              type="button"
+              onClick={onOpenManageCategories}
+              className="px-2.5 py-1.5 text-xs font-semibold rounded-lg whitespace-nowrap transition-all shrink-0 flex items-center gap-1 bg-slate-950 text-slate-400 hover:text-emerald-400 border border-slate-800 hover:border-emerald-500/30"
+              title="Palitan ang pangalan o magdagdag ng mga kategorya"
+            >
+              <Layers className="w-3.5 h-3.5 text-emerald-400" />
+              <span className="hidden sm:inline">I-edit ang Kategorya</span>
+            </button>
+          )}
         </div>
       </div>
 
