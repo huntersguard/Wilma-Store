@@ -750,7 +750,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
           {activeTab === 'camera' ? (
             <div className="space-y-3">
               {/* Camera Viewport container */}
-              <div className="relative rounded-2xl overflow-hidden bg-black h-72 sm:h-88 w-full border border-slate-800 flex items-center justify-center">
+              <div className="relative rounded-2xl overflow-hidden bg-black h-64 sm:h-80 w-full border border-slate-800 flex items-center justify-center">
                 {/* Native video element for BarcodeDetector engine */}
                 <video
                   id="native-scanner-video"
@@ -766,10 +766,15 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
                   className={`w-full h-full object-cover ${isNativeHardwareEngine ? 'hidden' : ''}`}
                 />
 
-                {/* Laser Overlay Guide */}
+                {/* Laser Overlay Guide with Clickable Crosshair Box */}
                 {isScanning && !hasCameraError && (
-                  <div className="absolute inset-0 pointer-events-none flex flex-col items-center justify-center">
-                    <div className="relative w-[88%] max-w-[340px] h-48 sm:h-56 border-2 border-emerald-400/80 rounded-2xl shadow-[0_0_25px_rgba(16,185,129,0.25)]">
+                  <div className="absolute inset-0 flex flex-col items-center justify-center pb-8">
+                    {/* Clickable crosshair reticle */}
+                    <div
+                      onClick={handleCaptureSnapshot}
+                      title="Pindutin para kuhanin ang barcode sa loob ng kahon"
+                      className="relative w-[86%] max-w-[320px] h-38 sm:h-48 border-2 border-emerald-400 rounded-2xl shadow-[0_0_25px_rgba(16,185,129,0.35)] cursor-pointer pointer-events-auto flex items-center justify-center group active:scale-98 transition-transform"
+                    >
                       {/* Corner marks */}
                       <span className="absolute -top-1.5 -left-1.5 w-5 h-5 border-t-3 border-l-3 border-emerald-400 rounded-tl-xl" />
                       <span className="absolute -top-1.5 -right-1.5 w-5 h-5 border-t-3 border-r-3 border-emerald-400 rounded-tr-xl" />
@@ -777,12 +782,35 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
                       <span className="absolute -bottom-1.5 -right-1.5 w-5 h-5 border-b-3 border-r-3 border-emerald-400 rounded-br-xl" />
 
                       {/* Moving Red Laser Scan Line */}
-                      <div className="w-full h-0.5 bg-gradient-to-r from-transparent via-red-500 to-transparent shadow-[0_0_12px_#ef4444] animate-pulse absolute top-1/2 -translate-y-1/2" />
+                      <div className="w-full h-0.5 bg-gradient-to-r from-transparent via-red-500 to-transparent shadow-[0_0_12px_#ef4444] animate-pulse absolute top-1/2 -translate-y-1/2 pointer-events-none" />
+
+                      {/* Tap to scan hint inside reticle */}
+                      <span className="text-[10px] text-emerald-300 font-semibold bg-black/60 px-2 py-0.5 rounded-full border border-emerald-500/30 opacity-90 group-hover:opacity-100 transition-opacity pointer-events-none">
+                        👆 Tapat ang barcode dito
+                      </span>
                     </div>
 
-                    <p className="mt-2.5 text-[11px] font-semibold text-emerald-300 bg-black/70 backdrop-blur-xs px-3 py-1 rounded-full border border-emerald-500/30">
+                    <p className="mt-1 text-[10px] font-semibold text-emerald-300 bg-black/70 backdrop-blur-xs px-2.5 py-0.5 rounded-full border border-emerald-500/30 pointer-events-none">
                       Tapat ang barcode kahit pahiga o patayo
                     </p>
+                  </div>
+                )}
+
+                {/* Floating On-Screen Shutter Button DIRECTLY on the live camera screen */}
+                {isScanning && !hasCameraError && (
+                  <div className="absolute bottom-2 inset-x-0 flex flex-col items-center justify-center z-30 pointer-events-auto px-3">
+                    <button
+                      type="button"
+                      onClick={handleCaptureSnapshot}
+                      disabled={isProcessingPhoto}
+                      className="w-full max-w-[280px] py-2 px-3.5 bg-emerald-500 hover:bg-emerald-400 active:scale-95 text-slate-950 font-black rounded-full text-xs flex items-center justify-center gap-1.5 shadow-2xl shadow-emerald-950/80 border-2 border-white transition-all cursor-pointer"
+                    >
+                      <Target className="w-4 h-4 stroke-[3] animate-pulse text-slate-950 shrink-0" />
+                      <span>📸 PINDUSTIN PARA KUNAN ANG CROSSHAIR</span>
+                    </button>
+                    <span className="text-[9.5px] text-emerald-300 drop-shadow-md bg-black/70 px-2 py-0.5 rounded-full mt-1">
+                      Anti-Shake: Babasahin agad ang barcode sa loob ng kahon
+                    </span>
                   </div>
                 )}
 

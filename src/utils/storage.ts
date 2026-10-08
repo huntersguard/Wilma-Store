@@ -1,5 +1,5 @@
 import { Product, SaleTransaction, StoreSettings } from '../types';
-import { DEFAULT_SETTINGS, INITIAL_PRODUCTS } from './sampleData';
+import { DEFAULT_SETTINGS, INITIAL_PRODUCTS, isSampleProductId } from './sampleData';
 
 const PRODUCTS_KEY = 'tindahan_pos_products_v1';
 const SALES_KEY = 'tindahan_pos_sales_v1';
@@ -14,7 +14,8 @@ export function getStoredProducts(): Product[] {
     }
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed)) {
-      return parsed;
+      // Ironclad filter: discard any legacy sample products
+      return parsed.filter((p: Product) => !isSampleProductId(p.id));
     }
     return [];
   } catch (err) {
@@ -25,8 +26,9 @@ export function getStoredProducts(): Product[] {
 
 export function saveStoredProducts(products: Product[]): void {
   try {
+    const clean = products.filter((p: Product) => !isSampleProductId(p.id));
     localStorage.setItem(INITIALIZED_KEY, 'true');
-    localStorage.setItem(PRODUCTS_KEY, JSON.stringify(products));
+    localStorage.setItem(PRODUCTS_KEY, JSON.stringify(clean));
   } catch (err) {
     console.error('Error saving products:', err);
   }
@@ -118,6 +120,6 @@ export function importFullBackup(jsonString: string): boolean {
 }
 
 export function resetToDefaults(): void {
-  localStorage.setItem(PRODUCTS_KEY, JSON.stringify(INITIAL_PRODUCTS));
+  localStorage.setItem(PRODUCTS_KEY, JSON.stringify([]));
   localStorage.setItem(SETTINGS_KEY, JSON.stringify(DEFAULT_SETTINGS));
 }

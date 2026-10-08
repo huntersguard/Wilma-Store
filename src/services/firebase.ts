@@ -86,15 +86,10 @@ export async function seedInitialFirestoreData(): Promise<void> {
 }
 
 /**
- * Optional: Explicit manual load of demo sample products ONLY if the user chooses to do so.
+ * Demo sample products are permanently disabled.
  */
 export async function loadSampleProductsDemo(): Promise<void> {
-  const batch = writeBatch(db);
-  INITIAL_PRODUCTS.forEach((prod) => {
-    const prodRef = doc(db, 'products', prod.id);
-    batch.set(prodRef, cleanForFirestore(prod));
-  });
-  await batch.commit();
+  // Permanently disabled
 }
 
 /**
@@ -110,7 +105,13 @@ export function subscribeToProducts(
     (snapshot) => {
       const items: Product[] = [];
       snapshot.forEach((docSnap) => {
-        items.push({ ...(docSnap.data() as Product), id: docSnap.id });
+        const p = { ...(docSnap.data() as Product), id: docSnap.id };
+        // Discard any legacy demo products (prod-001 through prod-024)
+        if (p.id.startsWith('prod-00') || p.id.startsWith('prod-01') || p.id.startsWith('prod-02')) {
+          deleteDoc(doc(db, 'products', p.id)).catch(() => {});
+          return;
+        }
+        items.push(p);
       });
 
       // Sort alphabetically by name

@@ -41,7 +41,7 @@ import {
   PinRecoveryModal,
   RecoverySettingsModal,
 } from './components/AdminPinModals';
-import { DEFAULT_CATEGORIES, DEFAULT_SETTINGS } from './utils/sampleData';
+import { DEFAULT_CATEGORIES, DEFAULT_SETTINGS, isSampleProductId } from './utils/sampleData';
 import {
   Store,
   ShoppingCart,
@@ -221,10 +221,21 @@ export default function App() {
         await seedInitialFirestoreData();
         setIsCloudSynced(true);
 
-        // Real-time listener for products across all phones
+        // Real-time listener for products across all phones (Protected against wiping local inventory)
         unsubscribeProducts = subscribeToProducts((cloudProducts) => {
-          setProducts(cloudProducts);
-          saveStoredProducts(cloudProducts);
+          const cleanCloud = cloudProducts.filter((p) => !isSampleProductId(p.id));
+          setProducts((currentProducts) => {
+            const cloudIds = new Set(cleanCloud.map((p) => p.id));
+            // Keep local custom products that might be pending sync or created on this device
+            const localPending = currentProducts.filter(
+              (p) => !cloudIds.has(p.id) && !isSampleProductId(p.id)
+            );
+            const merged = [...cleanCloud, ...localPending];
+            saveStoredProducts(merged);
+            // Push any pending local products to cloud
+            localPending.forEach((p) => syncSaveProduct(p).catch(() => {}));
+            return merged;
+          });
         });
 
         // Real-time listener for sales across all phones
@@ -267,10 +278,10 @@ export default function App() {
   const handleAddProduct = async (newProd: Omit<Product, 'id' | 'updatedAt'>) => {
     const created: Product = {
       ...newProd,
-      id: `prod-${Date.now()}`,
+      id: `item-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       updatedAt: new Date().toISOString(),
     };
-    const updated = [created, ...products];
+    const updated = [created, ...products.filter((p) => !isSampleProductId(p.id))];
     setProducts(updated);
     saveStoredProducts(updated);
 
