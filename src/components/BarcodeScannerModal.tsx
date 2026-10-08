@@ -12,6 +12,9 @@ import {
   CheckCircle2,
   Upload,
   Sparkles,
+  Target,
+  Crosshair,
+  Smartphone,
 } from 'lucide-react';
 import { playScanBeep } from '../utils/audio';
 
@@ -74,6 +77,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
   const [lastScannedCode, setLastScannedCode] = useState<string | null>(null);
   const [isNativeHardwareEngine, setIsNativeHardwareEngine] = useState(false);
   const [isProcessingPhoto, setIsProcessingPhoto] = useState(false);
+  const [snapshotFeedback, setSnapshotFeedback] = useState<string | null>(null);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -207,11 +211,13 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
     const video = document.getElementById('native-scanner-video') as HTMLVideoElement | null;
     if (!video) throw new Error('Video element not found');
 
+    const isIOS = typeof navigator !== 'undefined' && /iPhone|iPad|iPod/i.test(navigator.userAgent);
     const constraints: MediaStreamConstraints = {
       video: {
         facingMode: { ideal: 'environment' },
-        width: { ideal: 1920, min: 1280 },
-        height: { ideal: 1080, min: 720 },
+        width: isIOS ? { ideal: 1280, max: 1920 } : { ideal: 1920, min: 1280 },
+        height: isIOS ? { ideal: 720, max: 1080 } : { ideal: 1080, min: 720 },
+        frameRate: { ideal: 30, max: 30 },
       },
       audio: false,
     };
@@ -326,8 +332,9 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
     });
     html5QrCodeRef.current = html5QrCode;
 
+    const isIOS = typeof navigator !== 'undefined' && /iPhone|iPad|iPod/i.test(navigator.userAgent);
     const config = {
-      fps: 20,
+      fps: isIOS ? 15 : 20,
       qrbox: (viewfinderWidth: number, viewfinderHeight: number) => ({
         width: Math.floor(viewfinderWidth * 0.88),
         height: Math.floor(viewfinderHeight * 0.75),
@@ -441,11 +448,104 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
   };
 
   /**
-   * SNAP & SCAN: Freezes the video frame, increases contrast, and decodes.
+   * Helper: Crop source canvas to the exact center Crosshair Reticle (Region of Interest)
+   */
+  const cropCanvasToCrosshair = (
+    sourceCanvas: HTMLCanvasElement,
+    roiWidthRatio = 0.85,
+    roiHeightRatio = 0.65
+  ): HTMLCanvasElement => {
+    const cropCanvas = document.createElement('canvas');
+    const cropW = Math.max(100, Math.floor(sourceCanvas.width * roiWidthRatio));
+    const cropH = Math.max(100, Math.floor(sourceCanvas.height * roiHeightRatio));
+    const startX = Math.max(0, Math.floor((sourceCanvas.width - cropW) / 2));
+    const startY = Math.max(0, Math.floor((sourceCanvas.height - cropH) / 2));
+
+    cropCanvas.width = cropW;
+    cropCanvas.height = cropH;
+    const ctx = cropCanvas.getContext('2d');
+    if (ctx) {
+      ctx.drawImage(sourceCanvas, startX, startY, cropW, cropH, 0, 0, cropW, cropH);
+    }
+    return cropCanvas;
+  };
+
+  /**
+   * Helper: Boost contrast and convert to grayscale to sharpen blurry / shaking barcodes
+   */
+  const enhanceBarcodeContrast = (sourceCanvas: HTMLCanvasElement): HTMLCanvasElement => {
+    const enhancedCanvas = document.createElement('canvas');
+    enhancedCanvas.width = sourceCanvas.width;
+    enhancedCanvas.height = sourceCanvas.height;
+    const ctx = enhancedCanvas.getContext('2d', { willReadFrequently: true });
+    if (!ctx) return sourceCanvas;
+
+    ctx.drawImage(sourceCanvas, 0, 0);
+    try {
+      const imgData = ctx.getImageData(0, 0, enhancedCanvas.width, enhancedCanvas.height);
+      const data = imgData.data;
+
+      for (let i = 0; i < data.length; i += 4) {
+        // Luminance formula
+        const gray = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+        // High contrast stretching
+        const contrast = (gray - 128) * 1.85 + 128;
+        const finalVal = contrast < 0 ? 0 : contrast > 255 ? 255 : contrast;
+        data[i] = finalVal;
+        data[i + 1] = finalVal;
+        data[i + 2] = finalVal;
+      }
+      ctx.putImageData(imgData, 0, 0);
+      return enhancedCanvas;
+    } catch {
+      return sourceCanvas;
+    }
+  };
+
+  /**
+   * Helper: Multi-engine decoder on a single canvas candidate
+   */
+  const decodeFromCanvasCandidate = async (candidateCanvas: HTMLCanvasElement): Promise<string | null> => {
+    // 1. Try Native BarcodeDetector (hardware accelerated)
+    if ('BarcodeDetector' in window) {
+      try {
+        const detector = new window.BarcodeDetector({
+          formats: ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'qr_code', 'itf'],
+        });
+        const barcodes = await detector.detect(candidateCanvas);
+        if (barcodes && barcodes.length > 0 && barcodes[0].rawValue) {
+          return barcodes[0].rawValue.trim();
+        }
+      } catch {}
+    }
+
+    // 2. Try Html5Qrcode ZXing engine
+    try {
+      const blob = await new Promise<Blob | null>((resolve) => {
+        candidateCanvas.toBlob((b) => resolve(b), 'image/jpeg', 0.95);
+      });
+      if (blob) {
+        const file = new File([blob], 'snapshot.jpg', { type: 'image/jpeg' });
+        const scanner = html5QrCodeRef.current || new Html5Qrcode('file-scanner-temp', { verbose: false });
+        const res = await scanner.scanFileV2(file, true);
+        if (res?.decodedText) {
+          return res.decodedText.trim();
+        }
+      }
+    } catch {}
+
+    return null;
+  };
+
+  /**
+   * 🎯 TARGETED CROSSHAIR CAPTURE (Anti-Shake Snap):
+   * Grabs the high-res frame from the live video, crops directly to the crosshair box,
+   * performs multi-pass contrast sharpening to eliminate motion blur/jitter, and decodes.
    */
   const handleCaptureSnapshot = async () => {
     if (hasEmittedScanRef.current) return;
     setIsProcessingPhoto(true);
+    setSnapshotFeedback('Kinukuha at sinusuri ang barcode sa crosshair...');
 
     try {
       let video: HTMLVideoElement | null = null;
@@ -457,90 +557,114 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
 
       if (!video) throw new Error('Video not active');
 
-      const canvas = document.createElement('canvas');
-      canvas.width = video.videoWidth || 1280;
-      canvas.height = video.videoHeight || 720;
-      const ctx = canvas.getContext('2d');
+      const fullCanvas = document.createElement('canvas');
+      fullCanvas.width = video.videoWidth || 1280;
+      fullCanvas.height = video.videoHeight || 720;
+      const ctx = fullCanvas.getContext('2d');
       if (!ctx) throw new Error('Could not get canvas');
+      ctx.drawImage(video, 0, 0, fullCanvas.width, fullCanvas.height);
 
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-      if ('BarcodeDetector' in window) {
-        const detector = new window.BarcodeDetector({
-          formats: ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'qr_code'],
-        });
-        const barcodes = await detector.detect(canvas);
-        if (barcodes && barcodes.length > 0 && barcodes[0].rawValue) {
-          handleBarcodeDetected(barcodes[0].rawValue);
-          setIsProcessingPhoto(false);
-          return;
-        }
-      }
-
-      if (html5QrCodeRef.current) {
-        canvas.toBlob(async (blob) => {
-          if (!blob) return;
-          const file = new File([blob], 'snapshot.jpg', { type: 'image/jpeg' });
-          try {
-            const result = await html5QrCodeRef.current?.scanFileV2(file, true);
-            if (result?.decodedText) {
-              handleBarcodeDetected(result.decodedText);
-            } else {
-              alert('Walang barcode na nabasa sa snapshot. Pakisubukan muli o ilapit ang camera.');
-            }
-          } catch {
-            alert('Walang barcode na nabasa sa snapshot. Pakisubukan muli.');
-          } finally {
-            setIsProcessingPhoto(false);
-          }
-        }, 'image/jpeg', 0.95);
+      // Pass 1: Cropped directly to the center Crosshair box
+      const crosshairCanvas = cropCanvasToCrosshair(fullCanvas, 0.85, 0.65);
+      let decoded = await decodeFromCanvasCandidate(crosshairCanvas);
+      if (decoded) {
+        handleBarcodeDetected(decoded);
         return;
       }
 
-      alert('Hindi nabasa ang barcode sa kuha. Pakisubukan muli.');
+      // Pass 2: Enhanced contrast / binarized Crosshair (sharpens shaky/blurred barcodes)
+      const enhancedCrosshair = enhanceBarcodeContrast(crosshairCanvas);
+      decoded = await decodeFromCanvasCandidate(enhancedCrosshair);
+      if (decoded) {
+        handleBarcodeDetected(decoded);
+        return;
+      }
+
+      // Pass 3: Full-frame canvas
+      decoded = await decodeFromCanvasCandidate(fullCanvas);
+      if (decoded) {
+        handleBarcodeDetected(decoded);
+        return;
+      }
+
+      // Pass 4: Enhanced full-frame
+      const enhancedFull = enhanceBarcodeContrast(fullCanvas);
+      decoded = await decodeFromCanvasCandidate(enhancedFull);
+      if (decoded) {
+        handleBarcodeDetected(decoded);
+        return;
+      }
+
+      // If not recognized in this frame
+      setSnapshotFeedback('Hindi pa nabasa ang barcode. Ipuwesto sa gitna ng berdeng kahon at subukan ulit.');
+      setTimeout(() => setSnapshotFeedback(null), 3500);
     } catch (err: any) {
       console.warn('Snapshot scan error:', err);
-      alert('Pakisubukang itutok muli at pindutin ang Snap to Scan.');
+      setSnapshotFeedback('Hindi nabasa. Subukang ilapit nang kaunti (mga 4-6 pulgada).');
+      setTimeout(() => setSnapshotFeedback(null), 3500);
     } finally {
       setIsProcessingPhoto(false);
     }
   };
 
   /**
-   * Handle Photo Upload / Native Camera Capture
+   * Handle Photo Upload / Native Camera Capture (Uses iOS Hardware OIS & Deep Fusion)
    */
   const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     setIsProcessingPhoto(true);
+    setSnapshotFeedback('Sinusuri ang litrato mula sa camera...');
     try {
       const img = new Image();
       img.src = URL.createObjectURL(file);
       await new Promise((resolve) => (img.onload = resolve));
 
-      if ('BarcodeDetector' in window) {
-        const detector = new window.BarcodeDetector({
-          formats: ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'qr_code'],
-        });
-        const barcodes = await detector.detect(img);
-        if (barcodes && barcodes.length > 0 && barcodes[0].rawValue) {
-          handleBarcodeDetected(barcodes[0].rawValue);
-          setIsProcessingPhoto(false);
+      const fullCanvas = document.createElement('canvas');
+      fullCanvas.width = img.naturalWidth || img.width;
+      fullCanvas.height = img.naturalHeight || img.height;
+      const ctx = fullCanvas.getContext('2d');
+      if (ctx) {
+        ctx.drawImage(img, 0, 0);
+
+        // Pass 1: Center Crop
+        const centerCrop = cropCanvasToCrosshair(fullCanvas, 0.80, 0.60);
+        let decoded = await decodeFromCanvasCandidate(centerCrop);
+        if (decoded) {
+          handleBarcodeDetected(decoded);
+          return;
+        }
+
+        // Pass 2: Enhanced Center
+        const enhancedCenter = enhanceBarcodeContrast(centerCrop);
+        decoded = await decodeFromCanvasCandidate(enhancedCenter);
+        if (decoded) {
+          handleBarcodeDetected(decoded);
+          return;
+        }
+
+        // Pass 3: Full Image
+        decoded = await decodeFromCanvasCandidate(fullCanvas);
+        if (decoded) {
+          handleBarcodeDetected(decoded);
           return;
         }
       }
 
+      // Fallback direct scan
       const scanner = new Html5Qrcode('file-scanner-temp', { verbose: false });
       const res = await scanner.scanFileV2(file, true);
       if (res?.decodedText) {
         handleBarcodeDetected(res.decodedText);
       } else {
-        alert('Hindi nabasa ang barcode sa litrato. Pakisubukan muli.');
+        setSnapshotFeedback('Hindi nabasa ang barcode sa litrato. Pakisubukan muli o ilapit ang camera.');
+        setTimeout(() => setSnapshotFeedback(null), 3500);
       }
     } catch (err) {
       console.error('File scan failed:', err);
-      alert('Hindi nabasa ang barcode sa litrato. Pakisubukan ang manual entry.');
+      setSnapshotFeedback('Hindi nabasa ang barcode sa litrato. Maaari mong gamitin ang "I-type ang Barcode".');
+      setTimeout(() => setSnapshotFeedback(null), 3500);
     } finally {
       setIsProcessingPhoto(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
@@ -711,30 +835,81 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
                 )}
               </div>
 
-              {/* SNAP TO SCAN & Upload Photo Actions */}
-              <div className="grid grid-cols-2 gap-2">
+              {/* Snapshot Feedback banner */}
+              {snapshotFeedback && (
+                <div className="p-2.5 bg-amber-950/80 border border-amber-800/80 rounded-xl flex items-center justify-between gap-2 text-xs text-amber-200 animate-in fade-in">
+                  <div className="flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
+                    <span>{snapshotFeedback}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setSnapshotFeedback(null)}
+                    className="text-amber-400 hover:text-white"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
+
+              {/* SNAP TO SCAN & Upload Photo Actions (Specially built for iPhone camera shake) */}
+              <div className="space-y-2">
                 <button
                   type="button"
                   onClick={handleCaptureSnapshot}
                   disabled={isProcessingPhoto || !isScanning}
-                  className="py-2.5 px-3 bg-emerald-600 hover:bg-emerald-500 active:scale-98 disabled:opacity-50 text-white font-bold rounded-xl text-xs flex items-center justify-center gap-2 shadow-sm transition-all"
+                  className="w-full py-3 px-4 bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 hover:from-emerald-500 hover:to-teal-500 active:scale-98 disabled:opacity-50 text-white font-bold rounded-2xl text-xs sm:text-sm flex items-center justify-center gap-2.5 shadow-md shadow-emerald-950/50 transition-all border border-emerald-400/40"
                 >
-                  <Camera className="w-4 h-4" />
-                  <span>📸 Snap to Scan (Kumuha)</span>
+                  <Target className="w-5 h-5 text-emerald-200 animate-pulse" />
+                  <div className="text-left">
+                    <div className="font-bold flex items-center gap-1.5">
+                      <span>🎯 Kumuha sa Loob ng Crosshair (Anti-Shake Snap)</span>
+                      <span className="text-[10px] bg-emerald-950 text-emerald-300 px-1.5 py-0.5 rounded-full border border-emerald-500/40 font-normal">
+                        Rekomendado
+                      </span>
+                    </div>
+                    <div className="text-[10.5px] text-emerald-100/90 font-normal">
+                      Pindutin para basahin agad ang barcode sa loob ng kahon kahit maalog ang phone
+                    </div>
+                  </div>
                 </button>
 
-                <label className="py-2.5 px-3 bg-slate-800 hover:bg-slate-700 active:scale-98 text-slate-200 font-semibold rounded-xl text-xs flex items-center justify-center gap-2 transition-all cursor-pointer border border-slate-700/80">
-                  <Upload className="w-4 h-4 text-sky-400" />
-                  <span>Upload / Photo App</span>
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept="image/*"
-                    capture="environment"
-                    onChange={handlePhotoUpload}
-                    className="hidden"
-                  />
-                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <label className="py-2.5 px-3 bg-slate-900 hover:bg-slate-800 active:scale-98 text-slate-200 font-semibold rounded-xl text-xs flex items-center justify-center gap-2 transition-all cursor-pointer border border-slate-800">
+                    <Camera className="w-4 h-4 text-sky-400" />
+                    <span>📷 Phone Camera App</span>
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept="image/*"
+                      capture="environment"
+                      onChange={handlePhotoUpload}
+                      className="hidden"
+                    />
+                  </label>
+
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('manual')}
+                    className="py-2.5 px-3 bg-slate-900 hover:bg-slate-800 active:scale-98 text-slate-200 font-semibold rounded-xl text-xs flex items-center justify-center gap-2 transition-all border border-slate-800"
+                  >
+                    <Search className="w-4 h-4 text-amber-400" />
+                    <span>I-type ang Barcode</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* iPhone Anti-Shake Guidance Card */}
+              <div className="text-[11px] text-slate-300 leading-relaxed bg-slate-900/60 p-3 rounded-xl border border-slate-800/80 space-y-1">
+                <div className="flex items-center gap-1.5 font-bold text-sky-300">
+                  <Smartphone className="w-3.5 h-3.5 text-sky-400" />
+                  <span>💡 Solusyon sa Maalog na iPhone Camera:</span>
+                </div>
+                <p className="text-slate-400 text-[10.5px]">
+                  1. Itapat ang barcode sa berdeng kahon (crosshair) mga <strong className="text-slate-200">4 hanggang 6 inches</strong> ang layo.<br />
+                  2. Pindutin ang <strong className="text-emerald-300">"🎯 Kumuha sa Loob ng Crosshair"</strong>—aalisin nito ang pag-alog sa pamamagitan ng enhanced contrast frame scan.<br />
+                  3. O gamitin ang <strong className="text-sky-300">"📷 Phone Camera App"</strong> para gamitin ang built-in hardware optical stabilizer ng Apple.
+                </p>
               </div>
 
               {/* Hardware Controls: Zoom & Torch */}
