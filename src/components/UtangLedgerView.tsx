@@ -28,6 +28,8 @@ import {
   FileText,
   Wallet,
   Users,
+  Lock,
+  ShieldCheck,
 } from 'lucide-react';
 import { playCheckoutChime, playWarningSound } from '../utils/audio';
 import confetti from 'canvas-confetti';
@@ -44,12 +46,14 @@ interface UtangLedgerViewProps {
   onAddDirectCredit: (
     creditData: Omit<SaleTransaction, 'id' | 'receiptNumber'>
   ) => void;
+  onLockUtang?: () => void;
 }
 
 export const UtangLedgerView: React.FC<UtangLedgerViewProps> = ({
   sales,
   onRecordPayment,
   onAddDirectCredit,
+  onLockUtang,
 }) => {
   // Navigation & Search State
   const [activeTab, setActiveTab] = useState<'customers' | 'transactions'>('customers');
@@ -61,6 +65,7 @@ export const UtangLedgerView: React.FC<UtangLedgerViewProps> = ({
   const [historyModalCustomer, setHistoryModalCustomer] = useState<CustomerDebtorSummary | null>(null);
   const [isNewCreditModalOpen, setIsNewCreditModalOpen] = useState(false);
   const [isAdvanceModalOpen, setIsAdvanceModalOpen] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
 
   // Payment Form States
   const [paymentAmount, setPaymentAmount] = useState<number | ''>('');
@@ -127,6 +132,7 @@ export const UtangLedgerView: React.FC<UtangLedgerViewProps> = ({
 
   // Open Payment / Hulog Modal
   const handleOpenPaymentModal = (debtor: CustomerDebtorSummary) => {
+    setFormError(null);
     setPaymentModalCustomer(debtor);
     setPaymentAmount(debtor.netBalance > 0 ? debtor.netBalance : '');
     setPaymentDate(new Date().toISOString().slice(0, 16));
@@ -137,10 +143,11 @@ export const UtangLedgerView: React.FC<UtangLedgerViewProps> = ({
   // Submit Payment / Hulog
   const handleSubmitPayment = (e: React.FormEvent) => {
     e.preventDefault();
+    setFormError(null);
     if (!paymentModalCustomer) return;
     const amount = typeof paymentAmount === 'number' ? paymentAmount : parseFloat(paymentAmount);
     if (!amount || amount <= 0) {
-      alert('Pakilagay ang wastong halaga ng ibinayad.');
+      setFormError('Pakilagay ang wastong halaga ng ibinayad.');
       return;
     }
 
@@ -160,13 +167,14 @@ export const UtangLedgerView: React.FC<UtangLedgerViewProps> = ({
   // Submit New Credit
   const handleSubmitNewCredit = (e: React.FormEvent) => {
     e.preventDefault();
+    setFormError(null);
     if (!newCreditName.trim()) {
-      alert('Pakilagay ang pangalan ng umutang.');
+      setFormError('Pakilagay ang pangalan ng umutang.');
       return;
     }
     const amount = typeof newCreditAmount === 'number' ? newCreditAmount : parseFloat(newCreditAmount);
     if (!amount || amount <= 0) {
-      alert('Pakilagay ang wastong halaga ng inutang.');
+      setFormError('Pakilagay ang wastong halaga ng inutang.');
       return;
     }
 
@@ -209,13 +217,14 @@ export const UtangLedgerView: React.FC<UtangLedgerViewProps> = ({
   // Submit Advance Payment (Paunang Pondo)
   const handleSubmitAdvanceDeposit = (e: React.FormEvent) => {
     e.preventDefault();
+    setFormError(null);
     if (!advanceName.trim()) {
-      alert('Pakilagay ang pangalan ng nag-advance.');
+      setFormError('Pakilagay ang pangalan ng nag-advance.');
       return;
     }
     const amount = typeof advanceAmount === 'number' ? advanceAmount : parseFloat(advanceAmount);
     if (!amount || amount <= 0) {
-      alert('Pakilagay ang wastong halaga ng paunang bayad.');
+      setFormError('Pakilagay ang wastong halaga ng paunang bayad.');
       return;
     }
 
@@ -260,6 +269,18 @@ export const UtangLedgerView: React.FC<UtangLedgerViewProps> = ({
 
         {/* Quick Action Buttons */}
         <div className="flex flex-wrap items-center gap-2 self-stretch lg:self-auto">
+          {onLockUtang && (
+            <button
+              type="button"
+              onClick={onLockUtang}
+              className="px-3.5 py-2.5 bg-slate-800 hover:bg-slate-750 text-rose-300 border border-rose-500/30 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 shadow-sm transition-all active:scale-95 shrink-0"
+              title="I-lock ang Talaan ng Utang para kailanganin uli ang Admin PIN"
+            >
+              <Lock className="w-3.5 h-3.5 text-rose-400" />
+              <span>I-lock ang Utang</span>
+            </button>
+          )}
+
           {/* Add Direct Credit Button */}
           <button
             type="button"
@@ -1018,6 +1039,12 @@ export const UtangLedgerView: React.FC<UtangLedgerViewProps> = ({
                 />
               </div>
 
+              {formError && (
+                <div className="p-3 bg-rose-500/15 border border-rose-500/30 text-rose-300 rounded-xl text-xs font-semibold">
+                  {formError}
+                </div>
+              )}
+
               {/* Submit Buttons */}
               <div className="pt-2 flex gap-2">
                 <button
@@ -1214,6 +1241,12 @@ export const UtangLedgerView: React.FC<UtangLedgerViewProps> = ({
                 />
               </div>
 
+              {formError && (
+                <div className="p-3 bg-rose-500/15 border border-rose-500/30 text-rose-300 rounded-xl text-xs font-semibold">
+                  {formError}
+                </div>
+              )}
+
               {/* Buttons */}
               <div className="pt-2 flex gap-2">
                 <button
@@ -1395,6 +1428,12 @@ export const UtangLedgerView: React.FC<UtangLedgerViewProps> = ({
                   className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white"
                 />
               </div>
+
+              {formError && (
+                <div className="p-3 bg-rose-500/15 border border-rose-500/30 text-rose-300 rounded-xl text-xs font-semibold">
+                  {formError}
+                </div>
+              )}
 
               <div className="pt-2 flex gap-2">
                 <button

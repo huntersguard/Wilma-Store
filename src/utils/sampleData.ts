@@ -9,6 +9,9 @@ export const DEFAULT_SETTINGS: StoreSettings = {
   enableScanBeep: true,
   enableLowStockSound: true,
   defaultLowStockThreshold: 5,
+  theme: 'rose-boutique',
+  adminPin: '1234',
+  requireUtangPin: true,
 };
 
 export const INITIAL_PRODUCTS: Product[] = [

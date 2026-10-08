@@ -69,4 +69,7 @@ export interface StoreSettings {
   enableLowStockSound: boolean;
   defaultLowStockThreshold: number;
   customCategories?: string[];
+  theme?: 'rose-boutique' | 'classic-emerald';
+  adminPin?: string; // 4-digit PIN for admin actions (default '1234')
+  requireUtangPin?: boolean; // Protect Utang Ledger with Admin PIN
 }

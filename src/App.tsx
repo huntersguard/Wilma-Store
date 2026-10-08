@@ -19,6 +19,7 @@ import {
   subscribeToSettings,
   syncSaveProduct,
   syncDeleteProduct,
+  syncClearAllProducts,
   syncRecordSale,
   syncSettleCredit,
   syncUpdateSaleTransaction,
@@ -55,6 +56,10 @@ import {
   CheckCircle2,
   X,
   Layers,
+  Lock,
+  Shield,
+  Sparkles,
+  Palette,
 } from 'lucide-react';
 import { playScanBeep, playWarningSound } from './utils/audio';
 
@@ -77,6 +82,70 @@ export default function App() {
   const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
   const [isSoundEnabled, setIsSoundEnabled] = useState(true);
 
+  // Admin PIN Protection for Talaan ng Utang
+  const [isUtangUnlocked, setIsUtangUnlocked] = useState(false);
+  const [isUtangPinModalOpen, setIsUtangPinModalOpen] = useState(false);
+  const [enteredPin, setEnteredPin] = useState('');
+  const [pinError, setPinError] = useState<string | null>(null);
+
+  // Theme helper: 'rose-boutique' (default girly & professional chic) or 'classic-emerald'
+  const isRoseTheme = (settings.theme || 'rose-boutique') === 'rose-boutique';
+
+  const toggleTheme = () => {
+    const nextTheme: 'rose-boutique' | 'classic-emerald' = isRoseTheme ? 'classic-emerald' : 'rose-boutique';
+    const next = { ...settings, theme: nextTheme };
+    setSettings(next);
+    saveStoredSettings(next);
+    syncSaveSettings(next).catch(() => {});
+  };
+
+  const handleNavigateToUtang = () => {
+    if (settings.requireUtangPin !== false && !isUtangUnlocked) {
+      setEnteredPin('');
+      setPinError(null);
+      setIsUtangPinModalOpen(true);
+    } else {
+      setActiveTab('utang');
+    }
+  };
+
+  const handleLockUtang = () => {
+    setIsUtangUnlocked(false);
+    setActiveTab('pos');
+  };
+
+  const verifyPin = (pinToTest: string) => {
+    const targetPin = settings.adminPin || '1234';
+    if (pinToTest === targetPin) {
+      setIsUtangUnlocked(true);
+      setIsUtangPinModalOpen(false);
+      setActiveTab('utang');
+      setEnteredPin('');
+      setPinError(null);
+    } else {
+      setPinError('Maling PIN. Pakisubukan muli.');
+      playWarningSound();
+      setTimeout(() => {
+        setEnteredPin('');
+      }, 700);
+    }
+  };
+
+  const handlePinDigit = (digit: string) => {
+    if (enteredPin.length >= 4) return;
+    const next = enteredPin + digit;
+    setEnteredPin(next);
+    setPinError(null);
+    if (next.length === 4) {
+      verifyPin(next);
+    }
+  };
+
+  const handlePinBackspace = () => {
+    setEnteredPin((prev) => prev.slice(0, -1));
+    setPinError(null);
+  };
+
   // Setup real-time Firebase multi-phone synchronization
   useEffect(() => {
     let unsubscribeProducts = () => {};
@@ -91,10 +160,8 @@ export default function App() {
 
         // Real-time listener for products across all phones
         unsubscribeProducts = subscribeToProducts((cloudProducts) => {
-          if (cloudProducts.length > 0) {
-            setProducts(cloudProducts);
-            saveStoredProducts(cloudProducts);
-          }
+          setProducts(cloudProducts);
+          saveStoredProducts(cloudProducts);
         });
 
         // Real-time listener for sales across all phones
@@ -161,6 +228,17 @@ export default function App() {
       await syncDeleteProduct(productId);
     } catch (err) {
       console.warn('Cloud sync delete product fallback:', err);
+    }
+  };
+
+  const handleClearAllProducts = async () => {
+    setProducts([]);
+    saveStoredProducts([]);
+
+    try {
+      await syncClearAllProducts();
+    } catch (err) {
+      console.warn('Cloud sync clear all products fallback:', err);
     }
   };
 
@@ -418,28 +496,46 @@ export default function App() {
   const cartGrandTotal = cart.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0);
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-emerald-500 selection:text-slate-950">
+    <div className={`min-h-screen flex flex-col font-sans transition-colors duration-200 ${
+      isRoseTheme
+        ? 'bg-[#0f0a14] text-rose-50 selection:bg-pink-500 selection:text-white'
+        : 'bg-slate-950 text-slate-100 selection:bg-emerald-500 selection:text-slate-950'
+    }`}>
       {/* Top Application Header */}
-      <header className="sticky top-0 z-30 bg-slate-900/90 backdrop-blur-md border-b border-slate-800">
+      <header className={`sticky top-0 z-30 backdrop-blur-md border-b transition-colors ${
+        isRoseTheme
+          ? 'bg-[#150f1d]/90 border-rose-950/60 shadow-lg shadow-rose-950/20'
+          : 'bg-slate-900/90 border-slate-800'
+      }`}>
         <div className="max-w-7xl mx-auto px-3 sm:px-6 h-16 flex items-center justify-between gap-3">
           {/* Logo & Store Branding */}
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center text-slate-950 shadow-md font-extrabold text-base">
-              <Store className="w-5 h-5 text-slate-950" />
+            <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-extrabold text-base transition-all shadow-md ${
+              isRoseTheme
+                ? 'bg-gradient-to-br from-rose-500 via-pink-500 to-rose-600 text-white shadow-rose-900/30'
+                : 'bg-gradient-to-br from-emerald-500 to-teal-600 text-slate-950'
+            }`}>
+              {isRoseTheme ? <Sparkles className="w-5 h-5 text-white" /> : <Store className="w-5 h-5 text-slate-950" />}
             </div>
             <div>
               <div className="flex items-center gap-2">
                 <h1 className="font-extrabold text-white text-sm sm:text-base tracking-tight leading-tight">
                   {settings.storeName}
                 </h1>
-                <span className="hidden md:inline text-[10px] uppercase font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
-                  POS & Scanner
+                <span className={`hidden md:inline text-[10px] uppercase font-bold px-2 py-0.5 rounded border transition-colors ${
+                  isRoseTheme
+                    ? 'text-pink-300 bg-pink-500/10 border-pink-500/25'
+                    : 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20'
+                }`}>
+                  {isRoseTheme ? 'Boutique POS' : 'POS & Scanner'}
                 </span>
                 {/* Real-time Multi-phone Sync Status */}
                 <span
                   className={`hidden sm:inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full border transition-colors ${
                     isCloudSynced
-                      ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
+                      ? isRoseTheme
+                        ? 'bg-rose-500/15 text-rose-300 border-rose-500/30'
+                        : 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
                       : 'bg-amber-500/15 text-amber-300 border-amber-500/30'
                   }`}
                   title={
@@ -464,7 +560,11 @@ export default function App() {
             <button
               type="button"
               onClick={() => setIsPhoneModalOpen(true)}
-              className="px-3 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-semibold rounded-xl text-xs flex items-center gap-1.5 transition-all active:scale-95 shadow-xs"
+              className={`px-3 py-2 text-white font-semibold rounded-xl text-xs flex items-center gap-1.5 transition-all active:scale-95 shadow-xs ${
+                isRoseTheme
+                  ? 'bg-gradient-to-r from-rose-600 via-pink-600 to-rose-500 hover:from-rose-500 hover:to-pink-500'
+                  : 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500'
+              }`}
               title="Gamitin sa Telepono / I-install bilang Mobile App"
             >
               <Smartphone className="w-3.5 h-3.5" />
@@ -475,7 +575,11 @@ export default function App() {
             <button
               type="button"
               onClick={() => setIsPriceCheckerOpen(true)}
-              className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-emerald-400 font-semibold rounded-xl text-xs flex items-center gap-1.5 transition-all active:scale-95 border border-slate-700/60 shadow-xs"
+              className={`px-3 py-2 font-semibold rounded-xl text-xs flex items-center gap-1.5 transition-all active:scale-95 border shadow-xs ${
+                isRoseTheme
+                  ? 'bg-slate-900/80 hover:bg-slate-800 text-rose-300 border-rose-900/40'
+                  : 'bg-slate-800 hover:bg-slate-700 text-emerald-400 border-slate-700/60'
+              }`}
               title="Presyo Check"
             >
               <Tag className="w-3.5 h-3.5" />
@@ -486,11 +590,32 @@ export default function App() {
             <button
               type="button"
               onClick={() => setIsGlobalScannerOpen(true)}
-              className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold rounded-xl text-xs flex items-center gap-1.5 transition-all active:scale-95 shadow-sm"
+              className={`px-3 py-2 text-white font-semibold rounded-xl text-xs flex items-center gap-1.5 transition-all active:scale-95 shadow-sm ${
+                isRoseTheme
+                  ? 'bg-gradient-to-r from-rose-600 to-pink-600 hover:from-rose-500 hover:to-pink-500'
+                  : 'bg-emerald-600 hover:bg-emerald-500'
+              }`}
               title="I-scan ang Barcode"
             >
               <Camera className="w-3.5 h-3.5" />
               <span className="hidden sm:inline">Scan Barcode</span>
+            </button>
+
+            {/* Theme Toggle Button */}
+            <button
+              type="button"
+              onClick={toggleTheme}
+              className={`p-2 rounded-xl transition-all border flex items-center gap-1 ${
+                isRoseTheme
+                  ? 'bg-rose-500/10 border-rose-500/30 text-rose-300 hover:bg-rose-500/20'
+                  : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300 hover:bg-emerald-500/20'
+              }`}
+              title={isRoseTheme ? 'Kasalukuyang Tema: 🌸 Rose Quartz Boutique. Pindutin para lumipat sa Classic Emerald.' : 'Kasalukuyang Tema: 🌿 Classic Emerald Retail. Pindutin para lumipat sa Rose Quartz.'}
+            >
+              <Palette className="w-4 h-4" />
+              <span className="hidden lg:inline text-[11px] font-semibold">
+                {isRoseTheme ? '🌸 Rose' : '🌿 Emerald'}
+              </span>
             </button>
 
             {/* Sound Toggle */}
@@ -500,7 +625,7 @@ export default function App() {
               className="p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-xl transition-colors"
               title={isSoundEnabled ? 'Tunog: Naka-on' : 'Tunog: Naka-off'}
             >
-              {isSoundEnabled ? <Volume2 className="w-4 h-4 text-emerald-400" /> : <VolumeX className="w-4 h-4 text-slate-500" />}
+              {isSoundEnabled ? <Volume2 className={`w-4 h-4 ${isRoseTheme ? 'text-rose-400' : 'text-emerald-400'}`} /> : <VolumeX className="w-4 h-4 text-slate-500" />}
             </button>
 
             {/* Settings & Backup Modal Trigger */}
@@ -515,8 +640,10 @@ export default function App() {
           </div>
         </div>
 
-        {/* Navigation Bar Tabs */}
-        <div className="max-w-7xl mx-auto px-3 sm:px-6 flex items-center gap-1 overflow-x-auto scrollbar-none py-1.5 border-t border-slate-800/80 bg-slate-950/40">
+        {/* Navigation Bar Tabs for Desktop/Tablet */}
+        <div className={`max-w-7xl mx-auto px-3 sm:px-6 hidden md:flex items-center gap-1 overflow-x-auto scrollbar-none py-1.5 border-t ${
+          isRoseTheme ? 'border-rose-950/60 bg-[#0e0914]/60' : 'border-slate-800/80 bg-slate-950/40'
+        }`}>
           {/* Paninda / Catalog Tab */}
           <button
             type="button"
@@ -526,7 +653,7 @@ export default function App() {
             }}
             className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-2 transition-all whitespace-nowrap shrink-0 ${
               activeTab === 'pos' && posInitialMode === 'catalog'
-                ? 'bg-emerald-600 text-white shadow-xs'
+                ? isRoseTheme ? 'bg-rose-600 text-white shadow-xs' : 'bg-emerald-600 text-white shadow-xs'
                 : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
             }`}
           >
@@ -543,14 +670,16 @@ export default function App() {
             }}
             className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-2 transition-all whitespace-nowrap shrink-0 ${
               activeTab === 'pos' && posInitialMode === 'cashier'
-                ? 'bg-emerald-600 text-white shadow-xs'
+                ? isRoseTheme ? 'bg-rose-600 text-white shadow-xs' : 'bg-emerald-600 text-white shadow-xs'
                 : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
             }`}
           >
             <Receipt className="w-3.5 h-3.5" />
             <span>Kaha / Cashier</span>
             {cartItemCount > 0 && (
-              <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-emerald-500 text-slate-950 font-extrabold animate-pulse">
+              <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold animate-pulse ${
+                isRoseTheme ? 'bg-pink-500 text-white' : 'bg-emerald-500 text-slate-950'
+              }`}>
                 {cartItemCount} • ₱{cartGrandTotal.toFixed(0)}
               </span>
             )}
@@ -561,7 +690,7 @@ export default function App() {
             onClick={() => setActiveTab('inventory')}
             className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-2 transition-all whitespace-nowrap shrink-0 ${
               activeTab === 'inventory'
-                ? 'bg-emerald-600 text-white shadow-xs'
+                ? isRoseTheme ? 'bg-rose-600 text-white shadow-xs' : 'bg-emerald-600 text-white shadow-xs'
                 : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
             }`}
           >
@@ -587,17 +716,23 @@ export default function App() {
             )}
           </button>
 
+          {/* Talaan ng Utang (Protected with Admin PIN) */}
           <button
             type="button"
-            onClick={() => setActiveTab('utang')}
+            onClick={handleNavigateToUtang}
             className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-2 transition-all whitespace-nowrap shrink-0 ${
               activeTab === 'utang'
-                ? 'bg-amber-600 text-white shadow-xs'
+                ? isRoseTheme ? 'bg-rose-600 text-white shadow-xs' : 'bg-amber-600 text-white shadow-xs'
                 : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
             }`}
           >
             <UserCheck className="w-3.5 h-3.5" />
             <span>Talaan ng Utang</span>
+            {settings.requireUtangPin !== false && !isUtangUnlocked && (
+              <span className="text-[10px] bg-slate-850 text-amber-300 px-1 py-0.2 rounded border border-amber-500/30 flex items-center gap-0.5">
+                <Lock className="w-2.5 h-2.5" /> PIN
+              </span>
+            )}
             {unpaidUtangCount > 0 && (
               <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-amber-500 text-slate-950 font-bold">
                 {unpaidUtangCount}
@@ -610,7 +745,7 @@ export default function App() {
             onClick={() => setActiveTab('sales')}
             className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-2 transition-all whitespace-nowrap shrink-0 ${
               activeTab === 'sales'
-                ? 'bg-emerald-600 text-white shadow-xs'
+                ? isRoseTheme ? 'bg-rose-600 text-white shadow-xs' : 'bg-emerald-600 text-white shadow-xs'
                 : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
             }`}
           >
@@ -620,8 +755,8 @@ export default function App() {
         </div>
       </header>
 
-      {/* Main View Area */}
-      <main className="flex-1 max-w-7xl w-full mx-auto p-3 sm:p-6">
+      {/* Main View Area with Mobile Bottom Padding */}
+      <main className="flex-1 max-w-7xl w-full mx-auto p-3 sm:p-6 pb-28 md:pb-8">
         {activeTab === 'pos' && (
           <POSView
             products={products}
@@ -642,6 +777,7 @@ export default function App() {
             onAddProduct={handleAddProduct}
             onUpdateProduct={handleUpdateProduct}
             onDeleteProduct={handleDeleteProduct}
+            onClearAllProducts={handleClearAllProducts}
             onQuickAdjustStock={handleQuickAdjustStock}
             onExportBackup={handleExportBackup}
             onImportBackup={handleImportBackup}
@@ -663,11 +799,114 @@ export default function App() {
             sales={sales}
             onRecordPayment={handleRecordCustomerPayment}
             onAddDirectCredit={handleAddDirectCredit}
+            onLockUtang={handleLockUtang}
           />
         )}
 
         {activeTab === 'sales' && <SalesHistoryView sales={sales} />}
       </main>
+
+      {/* Mobile-First Ergonomic Bottom Navigation Bar (md:hidden) */}
+      <nav className={`md:hidden fixed bottom-0 inset-x-0 z-40 backdrop-blur-xl border-t px-2 py-1.5 flex items-center justify-around shadow-2xl transition-colors ${
+        isRoseTheme
+          ? 'bg-[#150f1d]/95 border-rose-950/80 shadow-rose-950/40'
+          : 'bg-slate-900/95 border-slate-800'
+      }`}>
+        {/* POS Paninda */}
+        <button
+          type="button"
+          onClick={() => {
+            setActiveTab('pos');
+            setPosInitialMode('catalog');
+          }}
+          className={`flex flex-col items-center justify-center py-1 px-2.5 rounded-xl transition-all ${
+            activeTab === 'pos' && posInitialMode === 'catalog'
+              ? isRoseTheme ? 'text-rose-400 font-bold scale-105' : 'text-emerald-400 font-bold scale-105'
+              : 'text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          <ShoppingCart className="w-5 h-5 mb-0.5" />
+          <span className="text-[10px]">Paninda</span>
+        </button>
+
+        {/* Kaha / Cashier */}
+        <button
+          type="button"
+          onClick={() => {
+            setActiveTab('pos');
+            setPosInitialMode('cashier');
+          }}
+          className={`relative flex flex-col items-center justify-center py-1 px-2.5 rounded-xl transition-all ${
+            activeTab === 'pos' && posInitialMode === 'cashier'
+              ? isRoseTheme ? 'text-rose-400 font-bold scale-105' : 'text-emerald-400 font-bold scale-105'
+              : 'text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          <Receipt className="w-5 h-5 mb-0.5" />
+          <span className="text-[10px]">Kaha</span>
+          {cartItemCount > 0 && (
+            <span className={`absolute top-0 right-1 px-1.5 py-0.2 rounded-full text-[9px] font-extrabold text-white animate-pulse ${
+              isRoseTheme ? 'bg-pink-500' : 'bg-emerald-500'
+            }`}>
+              {cartItemCount}
+            </span>
+          )}
+        </button>
+
+        {/* Imbentaryo */}
+        <button
+          type="button"
+          onClick={() => setActiveTab('inventory')}
+          className={`flex flex-col items-center justify-center py-1 px-2.5 rounded-xl transition-all ${
+            activeTab === 'inventory'
+              ? isRoseTheme ? 'text-rose-400 font-bold scale-105' : 'text-emerald-400 font-bold scale-105'
+              : 'text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          <Boxes className="w-5 h-5 mb-0.5" />
+          <span className="text-[10px]">Imbentaryo</span>
+        </button>
+
+        {/* Talaan ng Utang (Shows Lock Badge when protected) */}
+        <button
+          type="button"
+          onClick={handleNavigateToUtang}
+          className={`relative flex flex-col items-center justify-center py-1 px-2.5 rounded-xl transition-all ${
+            activeTab === 'utang'
+              ? isRoseTheme ? 'text-rose-400 font-bold scale-105' : 'text-amber-400 font-bold scale-105'
+              : 'text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          <div className="relative">
+            <UserCheck className="w-5 h-5 mb-0.5" />
+            {settings.requireUtangPin !== false && !isUtangUnlocked && (
+              <span className="absolute -top-1 -right-1 text-[8px] bg-amber-500/20 text-amber-300 border border-amber-500/40 rounded-full px-0.5">
+                🔒
+              </span>
+            )}
+          </div>
+          <span className="text-[10px]">Utang</span>
+          {unpaidUtangCount > 0 && (
+            <span className="absolute top-0 right-1 px-1.5 py-0.2 rounded-full text-[9px] font-bold bg-amber-500 text-slate-950">
+              {unpaidUtangCount}
+            </span>
+          )}
+        </button>
+
+        {/* Benta at Ulat */}
+        <button
+          type="button"
+          onClick={() => setActiveTab('sales')}
+          className={`flex flex-col items-center justify-center py-1 px-2.5 rounded-xl transition-all ${
+            activeTab === 'sales'
+              ? isRoseTheme ? 'text-rose-400 font-bold scale-105' : 'text-emerald-400 font-bold scale-105'
+              : 'text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          <BarChart3 className="w-5 h-5 mb-0.5" />
+          <span className="text-[10px]">Ulat</span>
+        </button>
+      </nav>
 
       {/* Footer */}
       <footer className="border-t border-slate-900 bg-slate-950 py-4 px-4 text-center text-xs text-slate-500">
@@ -723,6 +962,95 @@ export default function App() {
             </div>
 
             <div className="space-y-3 text-xs">
+              {/* Theme Selector */}
+              <div className="space-y-1.5 pb-2 border-b border-slate-800">
+                <label className="text-slate-300 font-semibold flex items-center gap-1.5">
+                  <Palette className="w-3.5 h-3.5 text-pink-400" />
+                  <span>Tema ng Tindahan (Theme):</span>
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const next = { ...settings, theme: 'rose-boutique' as const };
+                      setSettings(next);
+                      saveStoredSettings(next);
+                      syncSaveSettings(next).catch(() => {});
+                    }}
+                    className={`py-2 px-3 rounded-xl border text-xs font-semibold flex items-center justify-center gap-1.5 transition-all ${
+                      isRoseTheme
+                        ? 'bg-rose-500/20 border-rose-500 text-rose-200 shadow-xs'
+                        : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    <span>🌸 Rose Quartz</span>
+                    <span className="text-[10px] text-pink-400 font-normal">(Chic)</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const next = { ...settings, theme: 'classic-emerald' as const };
+                      setSettings(next);
+                      saveStoredSettings(next);
+                      syncSaveSettings(next).catch(() => {});
+                    }}
+                    className={`py-2 px-3 rounded-xl border text-xs font-semibold flex items-center justify-center gap-1.5 transition-all ${
+                      !isRoseTheme
+                        ? 'bg-emerald-500/20 border-emerald-500 text-emerald-200 shadow-xs'
+                        : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    <span>🌿 Classic Green</span>
+                    <span className="text-[10px] text-emerald-400 font-normal">(Retail)</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Admin PIN & Utang Protection */}
+              <div className="space-y-2 pb-2 border-b border-slate-800">
+                <div className="flex items-center justify-between">
+                  <label className="text-slate-300 font-semibold flex items-center gap-1.5">
+                    <Lock className="w-3.5 h-3.5 text-amber-400" />
+                    <span>Admin PIN para sa Talaan ng Utang:</span>
+                  </label>
+                  <label className="flex items-center gap-1.5 cursor-pointer text-[11px] text-slate-400">
+                    <input
+                      type="checkbox"
+                      checked={settings.requireUtangPin !== false}
+                      onChange={(e) => {
+                        const next = { ...settings, requireUtangPin: e.target.checked };
+                        setSettings(next);
+                        saveStoredSettings(next);
+                        syncSaveSettings(next).catch(() => {});
+                      }}
+                      className="rounded border-slate-700 text-amber-500 focus:ring-0"
+                    />
+                    <span>Naka-lock ang Utang</span>
+                  </label>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <input
+                    type="password"
+                    maxLength={4}
+                    value={settings.adminPin || '1234'}
+                    onChange={(e) => {
+                      const val = e.target.value.replace(/\D/g, '').slice(0, 4);
+                      const next = { ...settings, adminPin: val };
+                      setSettings(next);
+                      saveStoredSettings(next);
+                      syncSaveSettings(next).catch(() => {});
+                    }}
+                    placeholder="4-digit PIN"
+                    className="w-28 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white font-mono text-center tracking-widest text-sm"
+                  />
+                  <p className="text-[11px] text-slate-400 leading-tight">
+                    Tanging may alam lamang ng PIN ang makakabukas ng talaan at makakapaningil. (Default: 1234)
+                  </p>
+                </div>
+              </div>
+
               <div className="space-y-1">
                 <label className="text-slate-300 font-medium">Pangalan ng Tindahan</label>
                 <input
@@ -765,7 +1093,11 @@ export default function App() {
                     setIsSettingsOpen(false);
                     setIsCategoryModalOpen(true);
                   }}
-                  className="w-full py-2 px-3 bg-slate-800 hover:bg-slate-750 text-emerald-400 border border-slate-700 rounded-xl font-semibold flex items-center justify-center gap-1.5 transition-colors text-xs"
+                  className={`w-full py-2 px-3 border rounded-xl font-semibold flex items-center justify-center gap-1.5 transition-colors text-xs ${
+                    isRoseTheme
+                      ? 'bg-slate-900 hover:bg-slate-850 text-rose-300 border-rose-900/40'
+                      : 'bg-slate-800 hover:bg-slate-750 text-emerald-400 border-slate-700'
+                  }`}
                 >
                   <Layers className="w-3.5 h-3.5" />
                   <span>I-edit ang mga Kategorya (Categories)</span>
@@ -783,7 +1115,11 @@ export default function App() {
                   <button
                     type="button"
                     onClick={handleExportBackup}
-                    className="flex-1 py-2 px-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-semibold flex items-center justify-center gap-1.5 transition-colors"
+                    className={`flex-1 py-2 px-3 text-white rounded-xl font-semibold flex items-center justify-center gap-1.5 transition-colors ${
+                      isRoseTheme
+                        ? 'bg-gradient-to-r from-rose-600 to-pink-600 hover:from-rose-500 hover:to-pink-500'
+                        : 'bg-emerald-600 hover:bg-emerald-500'
+                    }`}
                   >
                     <Download className="w-3.5 h-3.5" />
                     <span>I-download ang Backup</span>
@@ -801,6 +1137,122 @@ export default function App() {
                 Isara
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Admin PIN Keypad Modal for Talaan ng Utang */}
+      {isUtangPinModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-md animate-in fade-in duration-150">
+          <div className={`relative w-full max-w-sm rounded-3xl border shadow-2xl p-6 space-y-5 text-center ${
+            isRoseTheme
+              ? 'bg-[#150f1d] border-rose-900/60 shadow-rose-950/50'
+              : 'bg-slate-900 border-slate-800'
+          }`}>
+            <button
+              type="button"
+              onClick={() => {
+                setIsUtangPinModalOpen(false);
+                setEnteredPin('');
+                setPinError(null);
+              }}
+              className="absolute top-4 right-4 text-slate-400 hover:text-white"
+            >
+              <X className="w-4 h-4" />
+            </button>
+
+            {/* Lock Header Icon */}
+            <div className="space-y-2">
+              <div className={`w-14 h-14 rounded-2xl mx-auto flex items-center justify-center shadow-lg ${
+                isRoseTheme
+                  ? 'bg-rose-500/15 border border-rose-500/30 text-rose-300'
+                  : 'bg-amber-500/15 border border-amber-500/30 text-amber-400'
+              }`}>
+                <Lock className="w-7 h-7" />
+              </div>
+              <h3 className="text-base sm:text-lg font-bold text-white tracking-tight">
+                Protektado ng Admin PIN
+              </h3>
+              <p className="text-xs text-slate-400 max-w-xs mx-auto">
+                Pribado ang Talaan ng Utang. Ilagay ang iyong 4-digit Admin PIN upang mabuksan at makapaningil.
+              </p>
+            </div>
+
+            {/* Visual PIN Dots Indicator */}
+            <div className="flex items-center justify-center gap-3 py-1">
+              {[0, 1, 2, 3].map((idx) => {
+                const filled = enteredPin.length > idx;
+                return (
+                  <div
+                    key={idx}
+                    className={`w-4 h-4 rounded-full transition-all duration-150 ${
+                      filled
+                        ? isRoseTheme
+                          ? 'bg-rose-500 scale-110 shadow-sm shadow-rose-500/50'
+                          : 'bg-amber-400 scale-110 shadow-sm shadow-amber-400/50'
+                        : 'border-2 border-slate-700 bg-slate-950'
+                    }`}
+                  />
+                );
+              })}
+            </div>
+
+            {pinError && (
+              <p className="text-xs text-rose-400 font-semibold animate-pulse">
+                {pinError}
+              </p>
+            )}
+
+            {/* Mobile Touch Keypad */}
+            <div className="grid grid-cols-3 gap-2.5 max-w-[260px] mx-auto pt-1">
+              {['1', '2', '3', '4', '5', '6', '7', '8', '9'].map((num) => (
+                <button
+                  key={num}
+                  type="button"
+                  onClick={() => handlePinDigit(num)}
+                  className={`h-12 rounded-2xl font-bold text-base transition-all active:scale-90 flex items-center justify-center border shadow-xs ${
+                    isRoseTheme
+                      ? 'bg-slate-950/80 border-rose-950/50 text-white hover:bg-rose-950/40'
+                      : 'bg-slate-950 border-slate-800 text-white hover:bg-slate-800'
+                  }`}
+                >
+                  {num}
+                </button>
+              ))}
+              <button
+                type="button"
+                onClick={handlePinBackspace}
+                className="h-12 rounded-2xl font-semibold text-xs text-slate-400 bg-slate-950/50 border border-slate-800 hover:text-white flex items-center justify-center active:scale-90"
+              >
+                Bura
+              </button>
+              <button
+                type="button"
+                onClick={() => handlePinDigit('0')}
+                className={`h-12 rounded-2xl font-bold text-base transition-all active:scale-90 flex items-center justify-center border shadow-xs ${
+                  isRoseTheme
+                    ? 'bg-slate-950/80 border-rose-950/50 text-white hover:bg-rose-950/40'
+                    : 'bg-slate-950 border-slate-800 text-white hover:bg-slate-800'
+                }`}
+              >
+                0
+              </button>
+              <button
+                type="button"
+                onClick={() => verifyPin(enteredPin)}
+                className={`h-12 rounded-2xl font-bold text-xs text-white transition-all active:scale-90 flex items-center justify-center shadow-md ${
+                  isRoseTheme
+                    ? 'bg-gradient-to-r from-rose-600 to-pink-600 hover:from-rose-500 hover:to-pink-500'
+                    : 'bg-amber-600 hover:bg-amber-500'
+                }`}
+              >
+                OK
+              </button>
+            </div>
+
+            <p className="text-[11px] text-slate-500">
+              Default PIN: <span className="font-mono text-slate-300 font-bold">1234</span> · Maaaring baguhin sa Settings
+            </p>
           </div>
         </div>
       )}

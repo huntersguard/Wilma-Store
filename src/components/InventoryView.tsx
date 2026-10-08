@@ -29,6 +29,7 @@ interface InventoryViewProps {
   onAddProduct: (product: Omit<Product, 'id' | 'updatedAt'>) => void;
   onUpdateProduct: (product: Product) => void;
   onDeleteProduct: (productId: string) => void;
+  onClearAllProducts?: () => void;
   onQuickAdjustStock: (productId: string, delta: number) => void;
   onExportBackup: () => void;
   onImportBackup: (json: string) => void;
@@ -42,6 +43,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
   onAddProduct,
   onUpdateProduct,
   onDeleteProduct,
+  onClearAllProducts,
   onQuickAdjustStock,
   onExportBackup,
   onImportBackup,
@@ -55,6 +57,8 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
   // Modal states
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+  const [productToDelete, setProductToDelete] = useState<Product | null>(null);
+  const [isClearAllModalOpen, setIsClearAllModalOpen] = useState(false);
   const [isScannerOpen, setIsScannerOpen] = useState(false);
   const [scannerTargetField, setScannerTargetField] = useState<'add' | 'edit'>('add');
 
@@ -156,8 +160,8 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
       sellingPrice: Number(formData.sellingPrice) || 0,
       stock: Number(formData.stock) || 0,
       minStock: Number(formData.minStock) || 5,
-      imageUrl: formData.imageUrl.trim() || undefined,
-      notes: formData.notes.trim(),
+      imageUrl: formData.imageUrl.trim() || '',
+      notes: formData.notes.trim() || '',
     });
 
     setIsAddModalOpen(false);
@@ -177,8 +181,8 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
       sellingPrice: Number(formData.sellingPrice) || 0,
       stock: Number(formData.stock) || 0,
       minStock: Number(formData.minStock) || 5,
-      imageUrl: formData.imageUrl.trim() || undefined,
-      notes: formData.notes.trim(),
+      imageUrl: formData.imageUrl.trim() || '',
+      notes: formData.notes.trim() || '',
       updatedAt: new Date().toISOString(),
     });
 
@@ -299,6 +303,18 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
               <span className="hidden sm:inline">Import</span>
               <input type="file" accept=".json" onChange={handleFileImport} className="hidden" />
             </label>
+
+            {onClearAllProducts && products.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setIsClearAllModalOpen(true)}
+                className="px-3 py-2.5 bg-rose-950/40 hover:bg-rose-900/60 border border-rose-800/40 text-rose-300 rounded-xl text-xs font-medium flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0"
+                title="Burahin ang lahat ng paninda para makapagsimula ng sarili mong listahan"
+              >
+                <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+                <span className="hidden sm:inline">Burahin Lahat</span>
+              </button>
+            )}
           </div>
         </div>
 
@@ -393,10 +409,32 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/60">
-              {filteredProducts.length === 0 ? (
+              {products.length === 0 ? (
+                <tr>
+                  <td colSpan={8} className="py-16 text-center">
+                    <div className="max-w-md mx-auto space-y-3 px-4">
+                      <div className="w-12 h-12 rounded-2xl bg-slate-800 border border-slate-700 flex items-center justify-center mx-auto text-emerald-400">
+                        <Package className="w-6 h-6" />
+                      </div>
+                      <div className="font-semibold text-white text-base">Walang Paninda sa Imbentaryo</div>
+                      <p className="text-xs text-slate-400">
+                        Malinis at handa na ang imbentaryo para sa iyong tindahan. Pindutin ang button sa ibaba upang magdagdag ng iyong unang paninda.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={handleOpenAdd}
+                        className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-semibold shadow-md transition-colors"
+                      >
+                        <Plus className="w-4 h-4" />
+                        <span>Magdagdag ng Unang Paninda</span>
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ) : filteredProducts.length === 0 ? (
                 <tr>
                   <td colSpan={8} className="py-12 text-center text-slate-500">
-                    Walang nahanap na paninda na tumutugma sa filter.
+                    Walang nahanap na paninda na tumutugma sa filter o search.
                   </td>
                 </tr>
               ) : (
@@ -526,13 +564,9 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                           </button>
                           <button
                             type="button"
-                            onClick={() => {
-                              if (confirm(`Sigurado ka bang nais burahin ang "${p.name}"?`)) {
-                                onDeleteProduct(p.id);
-                              }
-                            }}
+                            onClick={() => setProductToDelete(p)}
                             className="p-1.5 text-slate-500 hover:text-rose-400 hover:bg-slate-800 rounded-lg transition-colors"
-                            title="Burahin"
+                            title="Burahin ang Paninda"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
@@ -820,6 +854,97 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
         title="I-scan ang Barcode ng Paninda"
         subtitle="Itutok sa barcode ng packaging para kusa itong mai-type"
       />
+
+      {/* In-app Single Product Delete Confirmation Modal (never blocked by iframes) */}
+      {productToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-150">
+          <div className="relative w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden p-6 space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="w-11 h-11 rounded-xl bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400 shrink-0">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-semibold text-white">Burahin ang Paninda?</h3>
+                <p className="text-xs text-slate-400">Hindi na maibabalik ang datos ng panindang ito.</p>
+              </div>
+            </div>
+
+            <div className="bg-slate-950 border border-slate-800 rounded-xl p-3.5 space-y-2">
+              <div className="text-sm font-semibold text-white line-clamp-2">{productToDelete.name}</div>
+              <div className="grid grid-cols-2 gap-2 text-xs text-slate-400 font-mono">
+                <div>Barcode: <span className="text-slate-200">{productToDelete.barcode || 'Wala'}</span></div>
+                <div>Kategorya: <span className="text-slate-200">{productToDelete.category}</span></div>
+                <div>Benta: <span className="text-emerald-400 font-bold">₱{productToDelete.sellingPrice.toFixed(2)}</span></div>
+                <div>Stock: <span className="text-slate-200 font-bold">{productToDelete.stock} {productToDelete.unit}</span></div>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2">
+              <button
+                type="button"
+                onClick={() => setProductToDelete(null)}
+                className="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-medium transition-colors"
+              >
+                Kanselahin
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const id = productToDelete.id;
+                  setProductToDelete(null);
+                  onDeleteProduct(id);
+                }}
+                className="px-4 py-2.5 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 shadow-md shadow-rose-600/20 transition-colors"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Oo, Burahin</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* In-app Clear All Products Confirmation Modal (never blocked by iframes) */}
+      {isClearAllModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-150">
+          <div className="relative w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden p-6 space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="w-11 h-11 rounded-xl bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400 shrink-0">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-semibold text-white">Burahin Lahat ng Paninda?</h3>
+                <p className="text-xs text-rose-400 font-medium">Mawawala ang lahat ng kasalukuyang paninda ({products.length} items)</p>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-300 leading-relaxed">
+              Sigurado ka bang nais mong burahin ang lahat ng <strong className="text-white font-semibold">{products.length}</strong> na paninda sa imbentaryo? Magiging malinis ang iyong talaan at maaari ka nang magsimula sa sarili mong mga paninda.
+            </p>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2">
+              <button
+                type="button"
+                onClick={() => setIsClearAllModalOpen(false)}
+                className="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-medium transition-colors"
+              >
+                Kanselahin
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsClearAllModalOpen(false);
+                  onClearAllProducts?.();
+                }}
+                className="px-4 py-2.5 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 shadow-md shadow-rose-600/20 transition-colors"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Oo, Burahin Lahat ({products.length})</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

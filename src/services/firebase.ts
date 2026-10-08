@@ -34,58 +34,86 @@ export async function testFirestoreConnection(): Promise<boolean> {
 }
 
 /**
- * Seed initial sample products to Firestore if collection is empty or missing items
+ * Helper to remove undefined fields from objects before saving to Firestore.
+ * Firestore setDoc/batch.set crashes with "Unsupported field value: undefined".
+ */
+export function cleanForFirestore<T extends Record<string, any>>(obj: T): T {
+  const result: Record<string, any> = {};
+  for (const [key, value] of Object.entries(obj)) {
+    if (value === undefined) {
+      continue;
+    }
+    if (Array.isArray(value)) {
+      result[key] = value.map((item) =>
+        item !== null && typeof item === 'object' && !(item instanceof Date)
+          ? cleanForFirestore(item)
+          : item
+      );
+    } else if (value !== null && typeof value === 'object' && !(value instanceof Date)) {
+      result[key] = cleanForFirestore(value);
+    } else {
+      result[key] = value;
+    }
+  }
+  return result as T;
+}
+
+/**
+ * Seed initial sample products to Firestore ONCE only on a brand new virgin database.
+ * If the database was already initialized or already has settings/products, this NEVER re-seeds or overwrites user changes!
  */
 export async function seedInitialFirestoreData(): Promise<void> {
   try {
+    const initMetaRef = doc(db, 'settings', 'initialization');
+    const initDoc = await getDocFromServer(initMetaRef).catch(() => null);
+
+    // If marked initialized already, DO NOT touch or re-seed anything!
+    if (initDoc && initDoc.exists()) {
+      return;
+    }
+
+    // Check if store settings already exist (store was already set up previously)
+    const settingsDocRef = doc(db, 'settings', 'store');
+    const settingsDoc = await getDocFromServer(settingsDocRef).catch(() => null);
+
+    if (settingsDoc && settingsDoc.exists()) {
+      // Store settings already present! Mark initialization so sample products are NEVER resurrected.
+      await setDoc(
+        initMetaRef,
+        { hasCompletedInitialSeed: true, initializedAt: new Date().toISOString() },
+        { merge: true }
+      );
+      return;
+    }
+
+    // Check if products collection already has any records
     const productsRef = collection(db, 'products');
     const snapshot = await getDocs(productsRef);
-    const existingIds = new Set(snapshot.docs.map((d) => d.id));
-    const existingBarcodes = new Set(snapshot.docs.map((d) => (d.data() as Product).barcode));
 
+    if (!snapshot.empty) {
+      // Products already exist in database! Mark initialization and never re-seed.
+      await setDoc(
+        initMetaRef,
+        { hasCompletedInitialSeed: true, initializedAt: new Date().toISOString() },
+        { merge: true }
+      );
+      return;
+    }
+
+    // Only if brand new database with NO settings and NO products:
     const batch = writeBatch(db);
-    let writes = 0;
+    batch.set(settingsDocRef, cleanForFirestore(DEFAULT_SETTINGS));
+    batch.set(initMetaRef, { hasCompletedInitialSeed: true, initializedAt: new Date().toISOString() });
 
-    // Seed settings if missing
-    const settingsDoc = await getDocFromServer(doc(db, 'settings', 'store')).catch(() => null);
-    if (!settingsDoc || !settingsDoc.exists()) {
-      batch.set(doc(db, 'settings', 'store'), DEFAULT_SETTINGS);
-      writes++;
-    }
-
-    // Ensure all 24 INITIAL_PRODUCTS across all categories exist in Firestore
     INITIAL_PRODUCTS.forEach((prod) => {
-      if (!existingIds.has(prod.id) && !existingBarcodes.has(prod.barcode)) {
-        const prodRef = doc(db, 'products', prod.id);
-        batch.set(prodRef, prod);
-        writes++;
-      }
+      const prodRef = doc(db, 'products', prod.id);
+      batch.set(prodRef, cleanForFirestore(prod));
     });
 
-    // Backfill image URLs and ensure clean data
-    snapshot.forEach((docSnap) => {
-      const data = docSnap.data() as Product;
-      const initial = INITIAL_PRODUCTS.find((p) => p.id === docSnap.id || p.barcode === data.barcode);
-      if (initial) {
-        let needsUpdate = false;
-        const updates: Partial<Product> = {};
-        if (initial.imageUrl && (!data.imageUrl || data.imageUrl === '')) {
-          updates.imageUrl = initial.imageUrl;
-          needsUpdate = true;
-        }
-        if (needsUpdate) {
-          batch.update(docSnap.ref, updates);
-          writes++;
-        }
-      }
-    });
-
-    if (writes > 0) {
-      await batch.commit();
-      console.log(`Successfully synced/seeded ${writes} products to Cloud Firestore!`);
-    }
+    await batch.commit();
+    console.log('Brand new database initialized successfully.');
   } catch (err) {
-    console.warn('Error during Firestore seed:', err);
+    console.warn('Notice during Firestore initialization check:', err);
   }
 }
 
@@ -164,7 +192,8 @@ export function subscribeToSettings(
  */
 export async function syncSaveProduct(product: Product): Promise<void> {
   const prodRef = doc(db, 'products', product.id);
-  await setDoc(prodRef, product, { merge: true });
+  const safeProduct = cleanForFirestore(product);
+  await setDoc(prodRef, safeProduct, { merge: true });
 }
 
 /**
@@ -173,6 +202,27 @@ export async function syncSaveProduct(product: Product): Promise<void> {
 export async function syncDeleteProduct(productId: string): Promise<void> {
   const prodRef = doc(db, 'products', productId);
   await deleteDoc(prodRef);
+}
+
+/**
+ * Delete ALL products from Firestore in a batch write (e.g. user clearing sample products)
+ */
+export async function syncClearAllProducts(): Promise<void> {
+  try {
+    const productsRef = collection(db, 'products');
+    const snapshot = await getDocs(productsRef);
+    if (snapshot.empty) return;
+
+    const batch = writeBatch(db);
+    snapshot.docs.forEach((docSnap) => {
+      batch.delete(docSnap.ref);
+    });
+    await batch.commit();
+    console.log(`Successfully cleared ${snapshot.docs.length} products from Cloud Firestore.`);
+  } catch (err) {
+    console.error('Error clearing products in Firestore:', err);
+    throw err;
+  }
 }
 
 /**
@@ -186,7 +236,8 @@ export async function syncRecordSale(
 
   // 1. Add sale document
   const saleRef = doc(db, 'sales', sale.id);
-  batch.set(saleRef, sale);
+  const safeSale = cleanForFirestore(sale);
+  batch.set(saleRef, safeSale);
 
   // 2. Deduct inventory for each purchased item
   sale.items.forEach((item) => {
@@ -230,7 +281,8 @@ export async function syncUpdateSaleTransaction(
   updates: Partial<SaleTransaction>
 ): Promise<void> {
   const saleRef = doc(db, 'sales', transactionId);
-  await setDoc(saleRef, updates, { merge: true });
+  const safeUpdates = cleanForFirestore(updates);
+  await setDoc(saleRef, safeUpdates, { merge: true });
 }
 
 /**
@@ -242,7 +294,8 @@ export async function syncBatchUpdateSales(
   const batch = writeBatch(db);
   transactions.forEach((tx) => {
     const sRef = doc(db, 'sales', tx.id);
-    batch.set(sRef, tx, { merge: true });
+    const safeTx = cleanForFirestore(tx);
+    batch.set(sRef, safeTx, { merge: true });
   });
   await batch.commit();
 }
@@ -252,5 +305,6 @@ export async function syncBatchUpdateSales(
  */
 export async function syncSaveSettings(settings: StoreSettings): Promise<void> {
   const settingsRef = doc(db, 'settings', 'store');
-  await setDoc(settingsRef, settings, { merge: true });
+  const safeSettings = cleanForFirestore(settings);
+  await setDoc(settingsRef, safeSettings, { merge: true });
 }

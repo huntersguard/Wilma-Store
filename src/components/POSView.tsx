@@ -71,6 +71,10 @@ export const POSView: React.FC<POSViewProps> = ({
 
   // Out of stock warning confirmation modal state
   const [outOfStockPromptProduct, setOutOfStockPromptProduct] = useState<Product | null>(null);
+  const [isClearCartConfirmOpen, setIsClearCartConfirmOpen] = useState(false);
+
+  // Anti-burst cooldown ref for products during barcode scanning
+  const lastAddedMapRef = useRef<{ [productId: string]: number }>({});
 
   // Payment form states
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('cash');
@@ -99,6 +103,46 @@ export const POSView: React.FC<POSViewProps> = ({
     }
   }, [initialMode]);
 
+  // Global hardware barcode scanner support (USB / Bluetooth barcode gun)
+  useEffect(() => {
+    let buffer = '';
+    let lastKeyTime = 0;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const activeTag = document.activeElement?.tagName?.toLowerCase();
+      // If user is focused on a text input/textarea, do not intercept normal typing unless Enter is pressed
+      if (activeTag === 'input' || activeTag === 'textarea') {
+        return;
+      }
+
+      const now = Date.now();
+      const diff = now - lastKeyTime;
+      lastKeyTime = now;
+
+      if (e.key === 'Enter') {
+        const clean = buffer.trim();
+        if (clean.length >= 4) {
+          e.preventDefault();
+          handleBarcodeScanned(clean);
+        }
+        buffer = '';
+        return;
+      }
+
+      // Barcode guns type faster than 70ms per character
+      if (diff > 90) {
+        buffer = '';
+      }
+
+      if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        buffer += e.key;
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [products]);
+
   // Cart calculations
   const totalItemsCount = cart.reduce((sum, item) => sum + item.quantity, 0);
   const subtotal = cart.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0);
@@ -123,13 +167,20 @@ export const POSView: React.FC<POSViewProps> = ({
     }, 2400);
   };
 
-  // Add product to cart
+  // Add product to cart with per-item anti-burst debounce
   const addToCart = (product: Product, bypassWarning = false, suppressBeep = false) => {
     if (product.stock <= 0 && !bypassWarning) {
       playWarningSound();
       setOutOfStockPromptProduct(product);
       return;
     }
+
+    const now = Date.now();
+    // Anti-burst protection: when scanning or rapid tapping, ensure a minimum 1.8-second gap for the same product
+    if (suppressBeep && lastAddedMapRef.current[product.id] && now - lastAddedMapRef.current[product.id] < 1800) {
+      return;
+    }
+    lastAddedMapRef.current[product.id] = now;
 
     setCart((prev) => {
       const existing = prev.find((item) => item.product.id === product.id);
@@ -168,12 +219,15 @@ export const POSView: React.FC<POSViewProps> = ({
 
   const clearCart = () => {
     if (cart.length === 0) return;
-    if (confirm('Sigurado ka bang nais mong burahin ang lahat ng laman ng bayarin?')) {
-      setCart([]);
-      setDiscount(0);
-      setCashTendered('');
-      showToast('Nalinis na ang bayarin.');
-    }
+    setIsClearCartConfirmOpen(true);
+  };
+
+  const handleConfirmClearCart = () => {
+    setCart([]);
+    setDiscount(0);
+    setCashTendered('');
+    setIsClearCartConfirmOpen(false);
+    showToast('Nalinis na ang bayarin.');
   };
 
   const lastScanProcessedTimeRef = useRef<number>(0);
@@ -184,8 +238,8 @@ export const POSView: React.FC<POSViewProps> = ({
     if (!clean) return;
 
     const now = Date.now();
-    if (now - lastScanProcessedTimeRef.current < 2000) {
-      return; // 2-second debounce guard against rapid bursts
+    if (now - lastScanProcessedTimeRef.current < 1800) {
+      return; // 1.8-second debounce guard against rapid bursts
     }
     lastScanProcessedTimeRef.current = now;
 
@@ -200,7 +254,7 @@ export const POSView: React.FC<POSViewProps> = ({
       addToCart(matched, false, true);
     } else {
       playWarningSound();
-      alert(`Hindi nahanap ang barcode "${clean}". Pakitiyak na nakalista ito sa Imbentaryo.`);
+      showToast(`⚠️ Hindi nahanap ang barcode "${clean}". Pakitiyak na nakalista ito sa Imbentaryo.`);
     }
   };
 
@@ -209,13 +263,13 @@ export const POSView: React.FC<POSViewProps> = ({
 
     if (paymentMethod === 'cash' && numericCash < grandTotal) {
       playWarningSound();
-      alert(`Kulang ang ibinayad na pera! Kulang pa ng ₱${(grandTotal - numericCash).toFixed(2)}.`);
+      showToast(`⚠️ Kulang ang ibinayad na pera! Kulang pa ng ₱${(grandTotal - numericCash).toFixed(2)}.`);
       return;
     }
 
     if (paymentMethod === 'utang' && !customerName.trim()) {
       playWarningSound();
-      alert('Pakilagay ang Pangalan ng Umutang bago itala ang utang.');
+      showToast('⚠️ Pakilagay ang Pangalan ng Umutang bago itala ang utang.');
       return;
     }
 
@@ -1235,6 +1289,40 @@ export const POSView: React.FC<POSViewProps> = ({
                 className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl text-xs transition-colors"
               >
                 Susunod na Customer
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* In-app Clear Cart Confirmation Modal */}
+      {isClearCartConfirmOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-150">
+          <div className="relative w-full max-w-sm bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl p-5 space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400 shrink-0">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-sm sm:text-base font-semibold text-white">Burahin ang Bayarin?</h3>
+                <p className="text-xs text-slate-400">Aalisin ang lahat ng {totalItemsCount} aytem sa listahan.</p>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setIsClearCartConfirmOpen(false)}
+                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-medium transition-colors"
+              >
+                Kanselahin
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmClearCart}
+                className="px-4 py-2 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-xs font-semibold shadow-sm transition-colors"
+              >
+                Oo, Burahin
               </button>
             </div>
           </div>

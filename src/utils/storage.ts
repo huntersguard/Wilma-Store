@@ -4,35 +4,35 @@ import { DEFAULT_SETTINGS, INITIAL_PRODUCTS } from './sampleData';
 const PRODUCTS_KEY = 'tindahan_pos_products_v1';
 const SALES_KEY = 'tindahan_pos_sales_v1';
 const SETTINGS_KEY = 'tindahan_pos_settings_v1';
+const INITIALIZED_KEY = 'tindahan_has_initialized_v1';
 
 export function getStoredProducts(): Product[] {
   try {
     const raw = localStorage.getItem(PRODUCTS_KEY);
-    if (!raw) {
+    const hasInit = localStorage.getItem(INITIALIZED_KEY);
+    if (raw === null && !hasInit) {
+      localStorage.setItem(INITIALIZED_KEY, 'true');
       localStorage.setItem(PRODUCTS_KEY, JSON.stringify(INITIAL_PRODUCTS));
       return INITIAL_PRODUCTS;
     }
-    const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed) && parsed.length > 0) {
-      // Ensure existing stored products get image URLs if missing
-      const enriched = parsed.map((item: Product) => {
-        if (!item.imageUrl) {
-          const match = INITIAL_PRODUCTS.find((p) => p.id === item.id || p.barcode === item.barcode);
-          if (match?.imageUrl) return { ...item, imageUrl: match.imageUrl };
-        }
-        return item;
-      });
-      return enriched;
+    if (!raw) {
+      return [];
     }
-    return INITIAL_PRODUCTS;
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      localStorage.setItem(INITIALIZED_KEY, 'true');
+      return parsed;
+    }
+    return [];
   } catch (err) {
     console.error('Error reading products from storage:', err);
-    return INITIAL_PRODUCTS;
+    return [];
   }
 }
 
 export function saveStoredProducts(products: Product[]): void {
   try {
+    localStorage.setItem(INITIALIZED_KEY, 'true');
     localStorage.setItem(PRODUCTS_KEY, JSON.stringify(products));
   } catch (err) {
     console.error('Error saving products:', err);
