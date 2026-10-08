@@ -59,62 +59,42 @@ export function cleanForFirestore<T extends Record<string, any>>(obj: T): T {
 }
 
 /**
- * Seed initial sample products to Firestore ONCE only on a brand new virgin database.
- * If the database was already initialized or already has settings/products, this NEVER re-seeds or overwrites user changes!
+ * Ensure Firestore metadata and default settings are initialized.
+ * GUARANTEE: Never automatically seeds or resurrects sample products!
+ * The user's inventory belongs solely to them. Sample products will NEVER be auto-injected.
  */
 export async function seedInitialFirestoreData(): Promise<void> {
   try {
     const initMetaRef = doc(db, 'settings', 'initialization');
-    const initDoc = await getDocFromServer(initMetaRef).catch(() => null);
-
-    // If marked initialized already, DO NOT touch or re-seed anything!
-    if (initDoc && initDoc.exists()) {
-      return;
-    }
-
-    // Check if store settings already exist (store was already set up previously)
     const settingsDocRef = doc(db, 'settings', 'store');
+
+    // Mark initialization permanently so auto-seeding is forever disabled
+    await setDoc(
+      initMetaRef,
+      { hasCompletedInitialSeed: true, preventAutoSeed: true, updatedAt: new Date().toISOString() },
+      { merge: true }
+    );
+
+    // If store settings do not exist yet, create default settings
     const settingsDoc = await getDocFromServer(settingsDocRef).catch(() => null);
-
-    if (settingsDoc && settingsDoc.exists()) {
-      // Store settings already present! Mark initialization so sample products are NEVER resurrected.
-      await setDoc(
-        initMetaRef,
-        { hasCompletedInitialSeed: true, initializedAt: new Date().toISOString() },
-        { merge: true }
-      );
-      return;
+    if (!settingsDoc || !settingsDoc.exists()) {
+      await setDoc(settingsDocRef, cleanForFirestore(DEFAULT_SETTINGS), { merge: true });
     }
-
-    // Check if products collection already has any records
-    const productsRef = collection(db, 'products');
-    const snapshot = await getDocs(productsRef);
-
-    if (!snapshot.empty) {
-      // Products already exist in database! Mark initialization and never re-seed.
-      await setDoc(
-        initMetaRef,
-        { hasCompletedInitialSeed: true, initializedAt: new Date().toISOString() },
-        { merge: true }
-      );
-      return;
-    }
-
-    // Only if brand new database with NO settings and NO products:
-    const batch = writeBatch(db);
-    batch.set(settingsDocRef, cleanForFirestore(DEFAULT_SETTINGS));
-    batch.set(initMetaRef, { hasCompletedInitialSeed: true, initializedAt: new Date().toISOString() });
-
-    INITIAL_PRODUCTS.forEach((prod) => {
-      const prodRef = doc(db, 'products', prod.id);
-      batch.set(prodRef, cleanForFirestore(prod));
-    });
-
-    await batch.commit();
-    console.log('Brand new database initialized successfully.');
   } catch (err) {
     console.warn('Notice during Firestore initialization check:', err);
   }
+}
+
+/**
+ * Optional: Explicit manual load of demo sample products ONLY if the user chooses to do so.
+ */
+export async function loadSampleProductsDemo(): Promise<void> {
+  const batch = writeBatch(db);
+  INITIAL_PRODUCTS.forEach((prod) => {
+    const prodRef = doc(db, 'products', prod.id);
+    batch.set(prodRef, cleanForFirestore(prod));
+  });
+  await batch.commit();
 }
 
 /**

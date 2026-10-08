@@ -70,6 +70,9 @@ export interface StoreSettings {
   defaultLowStockThreshold: number;
   customCategories?: string[];
   theme?: 'rose-boutique' | 'classic-emerald';
-  adminPin?: string; // 4-digit PIN for admin actions (default '1234')
+  adminPin?: string; // 6-digit PIN for admin actions (default '123456')
   requireUtangPin?: boolean; // Protect Utang Ledger with Admin PIN
+  recoveryQuestion?: string; // Secret security question for PIN recovery
+  recoveryAnswer?: string; // Secret security answer (case-insensitive)
+  masterRecoveryCode?: string; // Emergency master key for owner (e.g. 'OWNER-999999')
 }

@@ -36,7 +36,12 @@ import { PriceCheckerModal } from './components/PriceCheckerModal';
 import { BarcodeScannerModal } from './components/BarcodeScannerModal';
 import { InstallPhoneModal } from './components/InstallPhoneModal';
 import { ManageCategoriesModal } from './components/ManageCategoriesModal';
-import { DEFAULT_CATEGORIES } from './utils/sampleData';
+import {
+  ChangePinModal,
+  PinRecoveryModal,
+  RecoverySettingsModal,
+} from './components/AdminPinModals';
+import { DEFAULT_CATEGORIES, DEFAULT_SETTINGS } from './utils/sampleData';
 import {
   Store,
   ShoppingCart,
@@ -57,11 +62,15 @@ import {
   X,
   Layers,
   Lock,
+  Unlock,
+  KeyRound,
+  ShieldCheck,
+  HelpCircle,
   Shield,
   Sparkles,
   Palette,
 } from 'lucide-react';
-import { playScanBeep, playWarningSound } from './utils/audio';
+import { playScanBeep, playWarningSound, playCheckoutChime } from './utils/audio';
 
 type ActiveTab = 'pos' | 'inventory' | 'low-stock' | 'utang' | 'sales';
 
@@ -82,9 +91,12 @@ export default function App() {
   const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
   const [isSoundEnabled, setIsSoundEnabled] = useState(true);
 
-  // Admin PIN Protection for Talaan ng Utang
+  // 6-Digit Admin PIN Protection for Talaan ng Utang & Owner Recovery
   const [isUtangUnlocked, setIsUtangUnlocked] = useState(false);
   const [isUtangPinModalOpen, setIsUtangPinModalOpen] = useState(false);
+  const [isChangePinModalOpen, setIsChangePinModalOpen] = useState(false);
+  const [isRecoveryModalOpen, setIsRecoveryModalOpen] = useState(false);
+  const [isRecoverySettingsModalOpen, setIsRecoverySettingsModalOpen] = useState(false);
   const [enteredPin, setEnteredPin] = useState('');
   const [pinError, setPinError] = useState<string | null>(null);
 
@@ -114,8 +126,16 @@ export default function App() {
     setActiveTab('pos');
   };
 
+  // Helper to get normalized 6-digit PIN
+  const getTargetPin = () => {
+    const raw = settings.adminPin || '123456';
+    if (raw.length === 6) return raw;
+    if (raw === '1234') return '123456';
+    return raw.padEnd(6, '0').slice(0, 6);
+  };
+
   const verifyPin = (pinToTest: string) => {
-    const targetPin = settings.adminPin || '1234';
+    const targetPin = getTargetPin();
     if (pinToTest === targetPin) {
       setIsUtangUnlocked(true);
       setIsUtangPinModalOpen(false);
@@ -123,7 +143,7 @@ export default function App() {
       setEnteredPin('');
       setPinError(null);
     } else {
-      setPinError('Maling PIN. Pakisubukan muli.');
+      setPinError('Maling 6-digit PIN. Pakisubukan muli o gamitin ang "Nakalimutan ang PIN" sa ibaba.');
       playWarningSound();
       setTimeout(() => {
         setEnteredPin('');
@@ -132,11 +152,11 @@ export default function App() {
   };
 
   const handlePinDigit = (digit: string) => {
-    if (enteredPin.length >= 4) return;
+    if (enteredPin.length >= 6) return;
     const next = enteredPin + digit;
     setEnteredPin(next);
     setPinError(null);
-    if (next.length === 4) {
+    if (next.length === 6) {
       verifyPin(next);
     }
   };
@@ -144,6 +164,49 @@ export default function App() {
   const handlePinBackspace = () => {
     setEnteredPin((prev) => prev.slice(0, -1));
     setPinError(null);
+  };
+
+  // Keyboard navigation for computer / laptop users in PIN Keypad modal
+  useEffect(() => {
+    if (!isUtangPinModalOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key >= '0' && e.key <= '9') {
+        e.preventDefault();
+        handlePinDigit(e.key);
+      } else if (e.key === 'Backspace') {
+        e.preventDefault();
+        handlePinBackspace();
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        verifyPin(enteredPin);
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        setIsUtangPinModalOpen(false);
+        setEnteredPin('');
+        setPinError(null);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isUtangPinModalOpen, enteredPin, settings.adminPin]);
+
+  const handleChangePinSuccess = (newPin: string) => {
+    const next: StoreSettings = { ...settings, adminPin: newPin };
+    setSettings(next);
+    saveStoredSettings(next);
+    syncSaveSettings(next).catch(() => {});
+  };
+
+  const handleSaveRecoverySettings = (question: string, answer: string, masterCode: string) => {
+    const next: StoreSettings = {
+      ...settings,
+      recoveryQuestion: question,
+      recoveryAnswer: answer,
+      masterRecoveryCode: masterCode,
+    };
+    setSettings(next);
+    saveStoredSettings(next);
+    syncSaveSettings(next).catch(() => {});
   };
 
   // Setup real-time Firebase multi-phone synchronization
@@ -172,8 +235,19 @@ export default function App() {
 
         // Real-time listener for store settings
         unsubscribeSettings = subscribeToSettings((cloudSettings) => {
-          setSettings(cloudSettings);
-          saveStoredSettings(cloudSettings);
+          const normalizedPin =
+            cloudSettings.adminPin === '1234'
+              ? '123456'
+              : (cloudSettings.adminPin && cloudSettings.adminPin.length < 6)
+              ? cloudSettings.adminPin.padEnd(6, '0')
+              : (cloudSettings.adminPin || '123456');
+          const cleanSettings: StoreSettings = {
+            ...DEFAULT_SETTINGS,
+            ...cloudSettings,
+            adminPin: normalizedPin,
+          };
+          setSettings(cleanSettings);
+          saveStoredSettings(cleanSettings);
         });
       } catch (err) {
         console.warn('Firebase init error, using local storage fallback:', err);
@@ -1007,14 +1081,26 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Admin PIN & Utang Protection */}
-              <div className="space-y-2 pb-2 border-b border-slate-800">
+              {/* Admin 6-Digit PIN & Utang Protection (Protected / Anti-Tamper) */}
+              <div className="space-y-3 p-3.5 bg-slate-950/70 border border-slate-800 rounded-2xl">
                 <div className="flex items-center justify-between">
-                  <label className="text-slate-300 font-semibold flex items-center gap-1.5">
-                    <Lock className="w-3.5 h-3.5 text-amber-400" />
-                    <span>Admin PIN para sa Talaan ng Utang:</span>
-                  </label>
-                  <label className="flex items-center gap-1.5 cursor-pointer text-[11px] text-slate-400">
+                  <div className="flex items-center gap-2">
+                    <div className={`w-7 h-7 rounded-lg flex items-center justify-center ${
+                      isRoseTheme ? 'bg-rose-500/15 text-rose-300' : 'bg-amber-500/15 text-amber-400'
+                    }`}>
+                      <Lock className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <span className="text-xs font-bold text-white block">
+                        Admin 6-Digit PIN & Utang Security
+                      </span>
+                      <span className="text-[10px] text-slate-400">
+                        Protektado laban sa unauthorized access
+                      </span>
+                    </div>
+                  </div>
+
+                  <label className="flex items-center gap-1.5 cursor-pointer text-[11px] text-slate-300">
                     <input
                       type="checkbox"
                       checked={settings.requireUtangPin !== false}
@@ -1024,31 +1110,70 @@ export default function App() {
                         saveStoredSettings(next);
                         syncSaveSettings(next).catch(() => {});
                       }}
-                      className="rounded border-slate-700 text-amber-500 focus:ring-0"
+                      className="rounded border-slate-700 text-rose-500 focus:ring-0"
                     />
                     <span>Naka-lock ang Utang</span>
                   </label>
                 </div>
 
-                <div className="flex items-center gap-2">
-                  <input
-                    type="password"
-                    maxLength={4}
-                    value={settings.adminPin || '1234'}
-                    onChange={(e) => {
-                      const val = e.target.value.replace(/\D/g, '').slice(0, 4);
-                      const next = { ...settings, adminPin: val };
-                      setSettings(next);
-                      saveStoredSettings(next);
-                      syncSaveSettings(next).catch(() => {});
+                <div className="flex items-center justify-between gap-2 p-2 bg-slate-900 rounded-xl border border-slate-800 text-xs">
+                  <div className="flex items-center gap-2">
+                    <KeyRound className="w-4 h-4 text-amber-400" />
+                    <span className="text-slate-300 font-medium">Status:</span>
+                    <span className="font-mono text-white font-bold tracking-widest bg-slate-950 px-2 py-0.5 rounded-md border border-slate-800">
+                      ••••••
+                    </span>
+                    <span className="text-[10px] text-emerald-400 font-medium">
+                      (6-digit aktibo)
+                    </span>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsSettingsOpen(false);
+                      setIsChangePinModalOpen(true);
                     }}
-                    placeholder="4-digit PIN"
-                    className="w-28 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white font-mono text-center tracking-widest text-sm"
-                  />
-                  <p className="text-[11px] text-slate-400 leading-tight">
-                    Tanging may alam lamang ng PIN ang makakabukas ng talaan at makakapaningil. (Default: 1234)
-                  </p>
+                    className={`px-3 py-1.5 rounded-lg font-bold text-xs shadow-xs transition-all flex items-center gap-1 text-white ${
+                      isRoseTheme
+                        ? 'bg-rose-600 hover:bg-rose-500'
+                        : 'bg-emerald-600 hover:bg-emerald-500'
+                    }`}
+                  >
+                    <KeyRound className="w-3.5 h-3.5" />
+                    <span>Palitan ang PIN</span>
+                  </button>
                 </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-0.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsSettingsOpen(false);
+                      setIsRecoverySettingsModalOpen(true);
+                    }}
+                    className="py-2 px-2.5 rounded-xl border border-slate-800 bg-slate-900 hover:bg-slate-850 text-slate-300 hover:text-white text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors"
+                  >
+                    <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>Setup ng Recovery / Master Key</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsSettingsOpen(false);
+                      setIsRecoveryModalOpen(true);
+                    }}
+                    className="py-2 px-2.5 rounded-xl border border-slate-800 bg-slate-900 hover:bg-slate-850 text-slate-300 hover:text-white text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors"
+                  >
+                    <HelpCircle className="w-3.5 h-3.5 text-amber-400" />
+                    <span>Nakalimutan ang PIN? I-recover</span>
+                  </button>
+                </div>
+
+                <p className="text-[10px] text-slate-400 leading-tight">
+                  🔒 May kumpirmasyon bago baguhin ang PIN upang hindi basta-basta mapalitan ng ibang tao sa tindahan.
+                </p>
               </div>
 
               <div className="space-y-1">
@@ -1171,16 +1296,16 @@ export default function App() {
                 <Lock className="w-7 h-7" />
               </div>
               <h3 className="text-base sm:text-lg font-bold text-white tracking-tight">
-                Protektado ng Admin PIN
+                Protektado ng 6-Digit Admin PIN
               </h3>
               <p className="text-xs text-slate-400 max-w-xs mx-auto">
-                Pribado ang Talaan ng Utang. Ilagay ang iyong 4-digit Admin PIN upang mabuksan at makapaningil.
+                Pribado ang Talaan ng Utang. Ilagay ang iyong 6-digit Admin PIN upang mabuksan at makapaningil.
               </p>
             </div>
 
-            {/* Visual PIN Dots Indicator */}
-            <div className="flex items-center justify-center gap-3 py-1">
-              {[0, 1, 2, 3].map((idx) => {
+            {/* Visual PIN Dots Indicator (6 Digits) */}
+            <div className="flex items-center justify-center gap-2.5 py-1">
+              {[0, 1, 2, 3, 4, 5].map((idx) => {
                 const filled = enteredPin.length > idx;
                 return (
                   <div
@@ -1250,12 +1375,67 @@ export default function App() {
               </button>
             </div>
 
+            {/* Forgot PIN / Recovery link */}
+            <div className="pt-1">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsUtangPinModalOpen(false);
+                  setIsRecoveryModalOpen(true);
+                }}
+                className={`text-xs font-semibold underline flex items-center justify-center gap-1.5 mx-auto transition-colors ${
+                  isRoseTheme ? 'text-rose-400 hover:text-rose-300' : 'text-amber-400 hover:text-amber-300'
+                }`}
+              >
+                <HelpCircle className="w-3.5 h-3.5" />
+                <span>Nakalimutan ang PIN? (I-recover Dito)</span>
+              </button>
+            </div>
+
             <p className="text-[11px] text-slate-500">
-              Default PIN: <span className="font-mono text-slate-300 font-bold">1234</span> · Maaaring baguhin sa Settings
+              Default PIN: <span className="font-mono text-slate-300 font-bold">123456</span> · Maaaring baguhin sa Settings
             </p>
           </div>
         </div>
       )}
+
+      {/* Change PIN Modal with Multi-step Confirmation */}
+      <ChangePinModal
+        isOpen={isChangePinModalOpen}
+        onClose={() => setIsChangePinModalOpen(false)}
+        settings={settings}
+        onSuccess={handleChangePinSuccess}
+        onOpenRecovery={() => setIsRecoveryModalOpen(true)}
+        isRoseTheme={isRoseTheme}
+        playSuccessSound={playCheckoutChime}
+        playWarningSound={playWarningSound}
+      />
+
+      {/* PIN Recovery Modal (Security Question & Master Emergency Code) */}
+      <PinRecoveryModal
+        isOpen={isRecoveryModalOpen}
+        onClose={() => setIsRecoveryModalOpen(false)}
+        settings={settings}
+        onPinReset={handleChangePinSuccess}
+        onUnlockUtang={() => {
+          setIsUtangUnlocked(true);
+          setActiveTab('utang');
+        }}
+        isRoseTheme={isRoseTheme}
+        playSuccessSound={playCheckoutChime}
+        playWarningSound={playWarningSound}
+      />
+
+      {/* Setup Recovery & Master Emergency Key Settings Modal */}
+      <RecoverySettingsModal
+        isOpen={isRecoverySettingsModalOpen}
+        onClose={() => setIsRecoverySettingsModalOpen(false)}
+        settings={settings}
+        onSave={handleSaveRecoverySettings}
+        isRoseTheme={isRoseTheme}
+        playSuccessSound={playCheckoutChime}
+        playWarningSound={playWarningSound}
+      />
 
       {/* Manage Categories Modal */}
       <ManageCategoriesModal

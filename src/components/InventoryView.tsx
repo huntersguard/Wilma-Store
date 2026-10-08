@@ -308,11 +308,11 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
               <button
                 type="button"
                 onClick={() => setIsClearAllModalOpen(true)}
-                className="px-3 py-2.5 bg-rose-950/40 hover:bg-rose-900/60 border border-rose-800/40 text-rose-300 rounded-xl text-xs font-medium flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0"
+                className="px-3 py-2.5 bg-rose-950/40 hover:bg-rose-900/60 border border-rose-800/40 text-rose-300 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0"
                 title="Burahin ang lahat ng paninda para makapagsimula ng sarili mong listahan"
               >
                 <Trash2 className="w-3.5 h-3.5 text-rose-400" />
-                <span className="hidden sm:inline">Burahin Lahat</span>
+                <span>Burahin Lahat ({products.length})</span>
               </button>
             )}
           </div>
@@ -392,193 +392,316 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
         </div>
       </div>
 
-      {/* Products List / Table */}
+      {/* Products List / Table & Mobile Cards */}
       <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-sm">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs sm:text-sm">
-            <thead className="bg-slate-950/80 border-b border-slate-800 text-slate-400 font-medium">
-              <tr>
-                <th className="py-3 px-4">Paninda at Barcode</th>
-                <th className="py-3 px-3">Kategorya</th>
-                <th className="py-3 px-3 text-right">Puhunan</th>
-                <th className="py-3 px-3 text-right">Benta</th>
-                <th className="py-3 px-3 text-right">Tubo</th>
-                <th className="py-3 px-4 text-center">Stock on Hand</th>
-                <th className="py-3 px-3 text-center">Status</th>
-                <th className="py-3 px-4 text-right">Aksyon</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-800/60">
-              {products.length === 0 ? (
-                <tr>
-                  <td colSpan={8} className="py-16 text-center">
-                    <div className="max-w-md mx-auto space-y-3 px-4">
-                      <div className="w-12 h-12 rounded-2xl bg-slate-800 border border-slate-700 flex items-center justify-center mx-auto text-emerald-400">
-                        <Package className="w-6 h-6" />
+        {products.length === 0 ? (
+          <div className="py-16 text-center">
+            <div className="max-w-md mx-auto space-y-3 px-4">
+              <div className="w-12 h-12 rounded-2xl bg-slate-800 border border-slate-700 flex items-center justify-center mx-auto text-emerald-400">
+                <Package className="w-6 h-6" />
+              </div>
+              <div className="font-semibold text-white text-base">Walang Paninda sa Imbentaryo</div>
+              <p className="text-xs text-slate-400">
+                Malinis at handa na ang imbentaryo para sa iyong tindahan. Pindutin ang button sa ibaba upang magdagdag ng iyong sariling paninda.
+              </p>
+              <button
+                type="button"
+                onClick={handleOpenAdd}
+                className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-semibold shadow-md transition-colors"
+              >
+                <Plus className="w-4 h-4" />
+                <span>Magdagdag ng Unang Paninda</span>
+              </button>
+            </div>
+          </div>
+        ) : filteredProducts.length === 0 ? (
+          <div className="py-12 text-center text-slate-500 text-xs sm:text-sm">
+            Walang nahanap na paninda na tumutugma sa filter o search.
+          </div>
+        ) : (
+          <>
+            {/* Mobile Card View (md:hidden) */}
+            <div className="md:hidden divide-y divide-slate-800/70">
+              {filteredProducts.map((p) => {
+                const margin = p.sellingPrice - p.costPrice;
+                const marginPercent = p.costPrice > 0 ? (margin / p.costPrice) * 100 : 0;
+                const isOut = p.stock <= 0;
+                const isLow = p.stock > 0 && p.stock <= p.minStock;
+
+                return (
+                  <div key={p.id} className="p-3.5 space-y-3 hover:bg-slate-800/20 transition-colors">
+                    {/* Header: Photo, Name, Barcode & Category */}
+                    <div className="flex items-start gap-3">
+                      <div className="w-14 h-14 rounded-xl overflow-hidden bg-slate-950 border border-slate-800 shrink-0 flex items-center justify-center">
+                        {p.imageUrl ? (
+                          <img
+                            src={p.imageUrl}
+                            alt={p.name}
+                            className="w-full h-full object-cover"
+                            onError={(e) => {
+                              (e.target as HTMLElement).style.display = 'none';
+                            }}
+                          />
+                        ) : (
+                          <Package className="w-6 h-6 text-slate-600 opacity-60" />
+                        )}
                       </div>
-                      <div className="font-semibold text-white text-base">Walang Paninda sa Imbentaryo</div>
-                      <p className="text-xs text-slate-400">
-                        Malinis at handa na ang imbentaryo para sa iyong tindahan. Pindutin ang button sa ibaba upang magdagdag ng iyong unang paninda.
-                      </p>
-                      <button
-                        type="button"
-                        onClick={handleOpenAdd}
-                        className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-semibold shadow-md transition-colors"
-                      >
-                        <Plus className="w-4 h-4" />
-                        <span>Magdagdag ng Unang Paninda</span>
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ) : filteredProducts.length === 0 ? (
-                <tr>
-                  <td colSpan={8} className="py-12 text-center text-slate-500">
-                    Walang nahanap na paninda na tumutugma sa filter o search.
-                  </td>
-                </tr>
-              ) : (
-                filteredProducts.map((p) => {
-                  const margin = p.sellingPrice - p.costPrice;
-                  const marginPercent = p.costPrice > 0 ? (margin / p.costPrice) * 100 : 0;
-                  const isOut = p.stock <= 0;
-                  const isLow = p.stock > 0 && p.stock <= p.minStock;
-
-                  return (
-                    <tr key={p.id} className="hover:bg-slate-800/30 transition-colors">
-                      {/* Name & Barcode with Photo */}
-                      <td className="py-3 px-4">
-                        <div className="flex items-center gap-3">
-                          <div className="w-11 h-11 rounded-xl overflow-hidden bg-slate-950 border border-slate-800 shrink-0">
-                            {p.imageUrl ? (
-                              <img
-                                src={p.imageUrl}
-                                alt={p.name}
-                                className="w-full h-full object-cover"
-                                onError={(e) => {
-                                  (e.target as HTMLElement).style.display = 'none';
-                                }}
-                              />
-                            ) : (
-                              <div className="w-full h-full flex items-center justify-center text-slate-600">
-                                <Package className="w-5 h-5 opacity-40" />
-                              </div>
-                            )}
-                          </div>
-                          <div>
-                            <div className="font-semibold text-white">{p.name}</div>
-                            <div className="text-[11px] text-slate-400 font-mono flex items-center gap-1.5 mt-0.5">
-                              <span>{p.barcode}</span>
-                              <span className="text-slate-600">·</span>
-                              <span className="uppercase text-slate-500 text-[10px]">{p.unit}</span>
-                            </div>
-                          </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="font-semibold text-white text-sm leading-snug line-clamp-2">
+                          {p.name}
                         </div>
-                      </td>
-
-                      {/* Category */}
-                      <td className="py-3 px-3 text-slate-300">
-                        <span className="text-xs text-slate-400">{p.category}</span>
-                      </td>
-
-                      {/* Cost Price */}
-                      <td className="py-3 px-3 text-right font-mono text-slate-400">
-                        ₱{p.costPrice.toFixed(2)}
-                      </td>
-
-                      {/* Selling Price */}
-                      <td className="py-3 px-3 text-right font-mono font-semibold text-emerald-400">
-                        ₱{p.sellingPrice.toFixed(2)}
-                      </td>
-
-                      {/* Margin */}
-                      <td className="py-3 px-3 text-right font-mono text-[11px] text-slate-400">
-                        +₱{margin.toFixed(2)}{' '}
-                        <span className="text-emerald-500">({marginPercent.toFixed(0)}%)</span>
-                      </td>
-
-                      {/* Stock on Hand with Quick +/- Buttons */}
-                      <td className="py-3 px-4 text-center">
-                        <div className="inline-flex items-center gap-1 bg-slate-950 border border-slate-800 rounded-lg p-0.5">
-                          <button
-                            type="button"
-                            onClick={() => onQuickAdjustStock(p.id, -1)}
-                            className="w-6 h-6 rounded flex items-center justify-center text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
-                            title="Bawasan ng 1"
-                          >
-                            -
-                          </button>
-                          <span
-                            className={`w-10 text-center font-bold font-mono text-xs ${
-                              isOut ? 'text-rose-400' : isLow ? 'text-amber-400' : 'text-white'
-                            }`}
-                          >
-                            {p.stock}
+                        <div className="text-[11px] text-slate-400 font-mono mt-0.5 flex flex-wrap items-center gap-1.5">
+                          <span>{p.barcode || 'Walang barcode'}</span>
+                          <span className="text-slate-600">·</span>
+                          <span className="text-slate-300 font-sans">{p.category}</span>
+                        </div>
+                        <div className="flex items-center gap-3 mt-1.5">
+                          <span className="text-base font-bold font-mono text-emerald-400">
+                            ₱{p.sellingPrice.toFixed(2)}
                           </span>
-                          <button
-                            type="button"
-                            onClick={() => onQuickAdjustStock(p.id, 1)}
-                            className="w-6 h-6 rounded flex items-center justify-center text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
-                            title="Dagdagan ng 1"
-                          >
-                            +
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => onQuickAdjustStock(p.id, 5)}
-                            className="px-1.5 h-6 rounded flex items-center justify-center text-[10px] text-emerald-400 hover:bg-slate-800 font-semibold transition-colors"
-                            title="Dagdagan ng 5 (Restock)"
-                          >
-                            +5
-                          </button>
+                          <span className="text-[11px] text-slate-400 font-mono">
+                            Puhunan: ₱{p.costPrice.toFixed(2)}
+                          </span>
+                          <span className="text-[10px] text-emerald-500 font-mono">
+                            (+₱{margin.toFixed(2)})
+                          </span>
                         </div>
-                      </td>
+                      </div>
+                    </div>
 
-                      {/* Status */}
-                      <td className="py-3 px-3 text-center">
+                    {/* Stock quick controls & Status & Action Buttons */}
+                    <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-800/60">
+                      {/* Stock controls */}
+                      <div className="inline-flex items-center gap-1 bg-slate-950 border border-slate-800 rounded-lg p-0.5">
+                        <button
+                          type="button"
+                          onClick={() => onQuickAdjustStock(p.id, -1)}
+                          className="w-7 h-7 rounded flex items-center justify-center text-slate-400 hover:text-white hover:bg-slate-800 font-bold text-sm"
+                          title="Bawasan ng 1"
+                        >
+                          -
+                        </button>
+                        <span
+                          className={`min-w-12 px-1 text-center font-bold font-mono text-xs ${
+                            isOut ? 'text-rose-400' : isLow ? 'text-amber-400' : 'text-white'
+                          }`}
+                        >
+                          {p.stock} <span className="text-[10px] font-normal text-slate-400">{p.unit}</span>
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => onQuickAdjustStock(p.id, 1)}
+                          className="w-7 h-7 rounded flex items-center justify-center text-slate-400 hover:text-white hover:bg-slate-800 font-bold text-sm"
+                          title="Dagdagan ng 1"
+                        >
+                          +
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onQuickAdjustStock(p.id, 5)}
+                          className="px-2 h-7 rounded flex items-center justify-center text-[11px] text-emerald-400 hover:bg-slate-800 font-semibold"
+                          title="Restock +5"
+                        >
+                          +5
+                        </button>
+                      </div>
+
+                      {/* Status pill & Actions */}
+                      <div className="flex items-center gap-1.5 ml-auto">
                         {isOut ? (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-rose-500/10 text-rose-400 border border-rose-500/20">
-                            <XCircle className="w-3 h-3" /> UBOS
+                          <span className="px-2 py-1 rounded-md text-[10px] font-bold bg-rose-500/10 text-rose-400 border border-rose-500/20">
+                            UBOS
                           </span>
                         ) : isLow ? (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20">
-                            <AlertTriangle className="w-3 h-3" /> PAUBOS
+                          <span className="px-2 py-1 rounded-md text-[10px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                            PAUBOS
                           </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                            <CheckCircle2 className="w-3 h-3" /> SAPAT
-                          </span>
-                        )}
-                      </td>
+                        ) : null}
 
-                      {/* Actions */}
-                      <td className="py-3 px-4 text-right">
-                        <div className="flex items-center justify-end gap-1.5">
-                          <button
-                            type="button"
-                            onClick={() => handleOpenEdit(p)}
-                            className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors"
-                            title="I-edit ang Paninda"
-                          >
-                            <Edit2 className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setProductToDelete(p)}
-                            className="p-1.5 text-slate-500 hover:text-rose-400 hover:bg-slate-800 rounded-lg transition-colors"
-                            title="Burahin ang Paninda"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleOpenEdit(p)}
+                          className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-semibold flex items-center gap-1 transition-colors"
+                          title="I-edit ang paninda"
+                        >
+                          <Edit2 className="w-3.5 h-3.5" />
+                          <span>Edit</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => setProductToDelete(p)}
+                          className="px-2.5 py-1.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 rounded-lg text-xs font-semibold flex items-center gap-1 transition-colors"
+                          title="Burahin ang paninda"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          <span>Burahin</span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Desktop Table View (hidden md:block) */}
+            <div className="hidden md:block overflow-x-auto">
+              <table className="w-full text-left text-xs sm:text-sm">
+                <thead className="bg-slate-950/80 border-b border-slate-800 text-slate-400 font-medium">
+                  <tr>
+                    <th className="py-3 px-4">Paninda at Barcode</th>
+                    <th className="py-3 px-3">Kategorya</th>
+                    <th className="py-3 px-3 text-right">Puhunan</th>
+                    <th className="py-3 px-3 text-right">Benta</th>
+                    <th className="py-3 px-3 text-right">Tubo</th>
+                    <th className="py-3 px-4 text-center">Stock on Hand</th>
+                    <th className="py-3 px-3 text-center">Status</th>
+                    <th className="py-3 px-4 text-right">Aksyon</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800/60">
+                  {filteredProducts.map((p) => {
+                    const margin = p.sellingPrice - p.costPrice;
+                    const marginPercent = p.costPrice > 0 ? (margin / p.costPrice) * 100 : 0;
+                    const isOut = p.stock <= 0;
+                    const isLow = p.stock > 0 && p.stock <= p.minStock;
+
+                    return (
+                      <tr key={p.id} className="hover:bg-slate-800/30 transition-colors">
+                        {/* Name & Barcode with Photo */}
+                        <td className="py-3 px-4">
+                          <div className="flex items-center gap-3">
+                            <div className="w-11 h-11 rounded-xl overflow-hidden bg-slate-950 border border-slate-800 shrink-0">
+                              {p.imageUrl ? (
+                                <img
+                                  src={p.imageUrl}
+                                  alt={p.name}
+                                  className="w-full h-full object-cover"
+                                  onError={(e) => {
+                                    (e.target as HTMLElement).style.display = 'none';
+                                  }}
+                                />
+                              ) : (
+                                <div className="w-full h-full flex items-center justify-center text-slate-600">
+                                  <Package className="w-5 h-5 opacity-40" />
+                                </div>
+                              )}
+                            </div>
+                            <div>
+                              <div className="font-semibold text-white">{p.name}</div>
+                              <div className="text-[11px] text-slate-400 font-mono flex items-center gap-1.5 mt-0.5">
+                                <span>{p.barcode}</span>
+                                <span className="text-slate-600">·</span>
+                                <span className="uppercase text-slate-500 text-[10px]">{p.unit}</span>
+                              </div>
+                            </div>
+                          </div>
+                        </td>
+
+                        {/* Category */}
+                        <td className="py-3 px-3 text-slate-300">
+                          <span className="text-xs text-slate-400">{p.category}</span>
+                        </td>
+
+                        {/* Cost Price */}
+                        <td className="py-3 px-3 text-right font-mono text-slate-400">
+                          ₱{p.costPrice.toFixed(2)}
+                        </td>
+
+                        {/* Selling Price */}
+                        <td className="py-3 px-3 text-right font-mono font-semibold text-emerald-400">
+                          ₱{p.sellingPrice.toFixed(2)}
+                        </td>
+
+                        {/* Margin */}
+                        <td className="py-3 px-3 text-right font-mono text-[11px] text-slate-400">
+                          +₱{margin.toFixed(2)}{' '}
+                          <span className="text-emerald-500">({marginPercent.toFixed(0)}%)</span>
+                        </td>
+
+                        {/* Stock on Hand with Quick +/- Buttons */}
+                        <td className="py-3 px-4 text-center">
+                          <div className="inline-flex items-center gap-1 bg-slate-950 border border-slate-800 rounded-lg p-0.5">
+                            <button
+                              type="button"
+                              onClick={() => onQuickAdjustStock(p.id, -1)}
+                              className="w-6 h-6 rounded flex items-center justify-center text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+                              title="Bawasan ng 1"
+                            >
+                              -
+                            </button>
+                            <span
+                              className={`w-10 text-center font-bold font-mono text-xs ${
+                                isOut ? 'text-rose-400' : isLow ? 'text-amber-400' : 'text-white'
+                              }`}
+                            >
+                              {p.stock}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => onQuickAdjustStock(p.id, 1)}
+                              className="w-6 h-6 rounded flex items-center justify-center text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+                              title="Dagdagan ng 1"
+                            >
+                              +
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => onQuickAdjustStock(p.id, 5)}
+                              className="px-1.5 h-6 rounded flex items-center justify-center text-[10px] text-emerald-400 hover:bg-slate-800 font-semibold transition-colors"
+                              title="Dagdagan ng 5 (Restock)"
+                            >
+                              +5
+                            </button>
+                          </div>
+                        </td>
+
+                        {/* Status */}
+                        <td className="py-3 px-3 text-center">
+                          {isOut ? (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-rose-500/10 text-rose-400 border border-rose-500/20">
+                              <XCircle className="w-3 h-3" /> UBOS
+                            </span>
+                          ) : isLow ? (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                              <AlertTriangle className="w-3 h-3" /> PAUBOS
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                              <CheckCircle2 className="w-3 h-3" /> SAPAT
+                            </span>
+                          )}
+                        </td>
+
+                        {/* Actions */}
+                        <td className="py-3 px-4 text-right">
+                          <div className="flex items-center justify-end gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => handleOpenEdit(p)}
+                              className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors"
+                              title="I-edit ang Paninda"
+                            >
+                              <Edit2 className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setProductToDelete(p)}
+                              className="p-1.5 text-slate-500 hover:text-rose-400 hover:bg-slate-800 rounded-lg transition-colors"
+                              title="Burahin ang Paninda"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
       </div>
 
       {/* Add / Edit Product Modal */}

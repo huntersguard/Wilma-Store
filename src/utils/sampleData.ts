@@ -10,8 +10,11 @@ export const DEFAULT_SETTINGS: StoreSettings = {
   enableLowStockSound: true,
   defaultLowStockThreshold: 5,
   theme: 'rose-boutique',
-  adminPin: '1234',
+  adminPin: '123456',
   requireUtangPin: true,
+  recoveryQuestion: 'Ano ang pangalan ng May-ari ng tindahan?',
+  recoveryAnswer: 'Wilma',
+  masterRecoveryCode: 'OWNER-999999',
 };
 
 export const INITIAL_PRODUCTS: Product[] = [

@@ -9,18 +9,11 @@ const INITIALIZED_KEY = 'tindahan_has_initialized_v1';
 export function getStoredProducts(): Product[] {
   try {
     const raw = localStorage.getItem(PRODUCTS_KEY);
-    const hasInit = localStorage.getItem(INITIALIZED_KEY);
-    if (raw === null && !hasInit) {
-      localStorage.setItem(INITIALIZED_KEY, 'true');
-      localStorage.setItem(PRODUCTS_KEY, JSON.stringify(INITIAL_PRODUCTS));
-      return INITIAL_PRODUCTS;
-    }
     if (!raw) {
       return [];
     }
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed)) {
-      localStorage.setItem(INITIALIZED_KEY, 'true');
       return parsed;
     }
     return [];
@@ -70,9 +63,16 @@ export function getStoredSettings(): StoreSettings {
     if (parsed.storeName === 'Aling Nena Tindahan & Sari-Sari') {
       parsed.storeName = 'Tindahan ni Wilma';
       parsed.ownerName = 'Wilma';
-      localStorage.setItem(SETTINGS_KEY, JSON.stringify(parsed));
     }
-    return { ...DEFAULT_SETTINGS, ...parsed };
+    // Upgrade 4-digit PIN to 6-digit PIN
+    if (parsed.adminPin === '1234') {
+      parsed.adminPin = '123456';
+    } else if (parsed.adminPin && parsed.adminPin.length < 6) {
+      parsed.adminPin = parsed.adminPin.padEnd(6, '0');
+    }
+    const combined = { ...DEFAULT_SETTINGS, ...parsed };
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(combined));
+    return combined;
   } catch (err) {
     console.error('Error reading settings:', err);
     return DEFAULT_SETTINGS;
