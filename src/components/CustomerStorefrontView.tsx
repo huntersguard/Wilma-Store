@@ -242,7 +242,7 @@ export const CustomerStorefrontView: React.FC<CustomerStorefrontProps> = ({
                 </span>
               </div>
               <p className="text-[11px] text-slate-400 truncate">
-                {settings.address || 'Online Ordering & Catalog ng Tindahan'}
+                <span>Brgy. Kiwalan</span>
               </p>
             </div>
           </div>
