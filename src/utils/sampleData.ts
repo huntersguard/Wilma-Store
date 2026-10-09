@@ -3,8 +3,8 @@ import { Product, StoreSettings } from '../types';
 export const DEFAULT_SETTINGS: StoreSettings = {
   storeName: 'Wilmanatic Store',
   ownerName: 'Wilma Cuyos',
-  contactNumber: '0917-123-4567',
-  address: 'Brgy. San Antonio, Pasig City',
+  contactNumber: '0912-3456-7890',
+  address: 'Brgy. Kiwalan',
   currencySymbol: '₱',
   enableScanBeep: true,
   enableLowStockSound: true,
