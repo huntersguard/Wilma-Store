@@ -75,4 +75,8 @@ export interface StoreSettings {
   recoveryQuestion?: string; // Secret security question for PIN recovery
   recoveryAnswer?: string; // Secret security answer (case-insensitive)
   masterRecoveryCode?: string; // Emergency master key for owner (e.g. 'OWNER-999999')
+  onlineStoreEnabled?: boolean;
+  onlineStoreNotice?: string; // e.g. "Bukas kami 6:00 AM - 9:00 PM. Pwedeng pickup o deliver!"
+  gcashNumber?: string;
+  messengerLink?: string;
 }

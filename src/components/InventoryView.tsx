@@ -5,6 +5,7 @@ import { BarcodeScannerModal } from './BarcodeScannerModal';
 import { compressProductImage } from '../utils/imageUtils';
 import {
   Plus,
+  Minus,
   Search,
   Camera,
   AlertTriangle,
@@ -963,28 +964,96 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                 </div>
               </div>
 
-              {/* Stock on Hand & Min Stock Alert Threshold */}
+              {/* Stock on Hand & Min Stock Alert Threshold with + and - Buttons */}
               <div className="grid grid-cols-2 gap-3">
+                {/* Stock on Hand */}
                 <div className="space-y-1">
-                  <label className="text-xs font-medium text-slate-300">Kasalukuyang Stock</label>
-                  <input
-                    type="number"
-                    min="0"
-                    value={formData.stock}
-                    onChange={(e) => setFormData({ ...formData, stock: parseInt(e.target.value) || 0 })}
-                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs sm:text-sm text-white font-mono"
-                  />
+                  <label className="text-xs font-medium text-slate-300 flex items-center justify-between">
+                    <span>Kasalukuyang Stock</span>
+                    <span className="text-[10px] text-slate-500 font-mono">Dami</span>
+                  </label>
+                  <div className="flex items-center gap-1 bg-slate-950 border border-slate-700 rounded-xl p-1">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setFormData((prev) => ({
+                          ...prev,
+                          stock: Math.max(0, (Number(prev.stock) || 0) - 1),
+                        }))
+                      }
+                      className="w-9 h-9 rounded-lg bg-slate-900 hover:bg-slate-800 active:scale-95 text-slate-300 hover:text-white font-bold flex items-center justify-center transition-colors shrink-0"
+                      title="Bawasan ang stock (-1)"
+                    >
+                      <Minus className="w-3.5 h-3.5" />
+                    </button>
+                    <input
+                      type="number"
+                      min="0"
+                      value={formData.stock}
+                      onChange={(e) =>
+                        setFormData({ ...formData, stock: Math.max(0, parseInt(e.target.value) || 0) })
+                      }
+                      className="w-full bg-transparent text-center text-xs sm:text-sm text-white font-mono font-bold focus:outline-none"
+                    />
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setFormData((prev) => ({
+                          ...prev,
+                          stock: (Number(prev.stock) || 0) + 1,
+                        }))
+                      }
+                      className="w-9 h-9 rounded-lg bg-slate-900 hover:bg-slate-800 active:scale-95 text-slate-300 hover:text-white font-bold flex items-center justify-center transition-colors shrink-0"
+                      title="Dagdagan ang stock (+1)"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
                 </div>
 
+                {/* Min Stock Alert */}
                 <div className="space-y-1">
-                  <label className="text-xs font-medium text-amber-400">Babala (Min Stock Alert)</label>
-                  <input
-                    type="number"
-                    min="1"
-                    value={formData.minStock}
-                    onChange={(e) => setFormData({ ...formData, minStock: parseInt(e.target.value) || 1 })}
-                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs sm:text-sm text-white font-mono"
-                  />
+                  <label className="text-xs font-medium text-amber-400 flex items-center justify-between">
+                    <span>Babala (Min Stock Alert)</span>
+                    <span className="text-[10px] text-amber-500/80 font-mono">Limit</span>
+                  </label>
+                  <div className="flex items-center gap-1 bg-slate-950 border border-slate-700 rounded-xl p-1">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setFormData((prev) => ({
+                          ...prev,
+                          minStock: Math.max(0, (Number(prev.minStock) || 0) - 1),
+                        }))
+                      }
+                      className="w-9 h-9 rounded-lg bg-slate-900 hover:bg-slate-800 active:scale-95 text-slate-300 hover:text-white font-bold flex items-center justify-center transition-colors shrink-0"
+                      title="Bawasan ang min stock alert (-1)"
+                    >
+                      <Minus className="w-3.5 h-3.5" />
+                    </button>
+                    <input
+                      type="number"
+                      min="0"
+                      value={formData.minStock}
+                      onChange={(e) =>
+                        setFormData({ ...formData, minStock: Math.max(0, parseInt(e.target.value) || 0) })
+                      }
+                      className="w-full bg-transparent text-center text-xs sm:text-sm text-amber-400 font-mono font-bold focus:outline-none"
+                    />
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setFormData((prev) => ({
+                          ...prev,
+                          minStock: (Number(prev.minStock) || 0) + 1,
+                        }))
+                      }
+                      className="w-9 h-9 rounded-lg bg-slate-900 hover:bg-slate-800 active:scale-95 text-slate-300 hover:text-white font-bold flex items-center justify-center transition-colors shrink-0"
+                      title="Dagdagan ang min stock alert (+1)"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
                 </div>
               </div>
 

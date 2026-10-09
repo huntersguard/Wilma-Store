@@ -32,6 +32,7 @@ import { InventoryView } from './components/InventoryView';
 import { LowStockAlertsView } from './components/LowStockAlertsView';
 import { UtangLedgerView } from './components/UtangLedgerView';
 import { SalesHistoryView } from './components/SalesHistoryView';
+import { CustomerStorefrontView } from './components/CustomerStorefrontView';
 import { PriceCheckerModal } from './components/PriceCheckerModal';
 import { BarcodeScannerModal } from './components/BarcodeScannerModal';
 import { InstallPhoneModal } from './components/InstallPhoneModal';
@@ -71,10 +72,11 @@ import {
   Palette,
   RefreshCw,
   SlidersHorizontal,
+  Globe,
 } from 'lucide-react';
 import { playScanBeep, playWarningSound, playCheckoutChime } from './utils/audio';
 
-type ActiveTab = 'pos' | 'inventory' | 'low-stock' | 'utang' | 'sales';
+type ActiveTab = 'pos' | 'inventory' | 'low-stock' | 'utang' | 'sales' | 'customer-store';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('pos');
@@ -86,6 +88,38 @@ export default function App() {
   const [isCloudSynced, setIsCloudSynced] = useState<boolean>(false);
   const [isSyncingCloud, setIsSyncingCloud] = useState<boolean>(false);
   const [cloudSyncToast, setCloudSyncToast] = useState<string | null>(null);
+
+  // Dedicated Customer Portal mode (via ?mode=store or ?store=1 or #store)
+  const [isCustomerMode, setIsCustomerMode] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    const params = new URLSearchParams(window.location.search);
+    return (
+      params.get('mode') === 'store' ||
+      params.get('store') === '1' ||
+      params.get('mode') === 'customer' ||
+      window.location.hash === '#store'
+    );
+  });
+
+  useEffect(() => {
+    const handleUrlChange = () => {
+      if (typeof window === 'undefined') return;
+      const params = new URLSearchParams(window.location.search);
+      const isStore =
+        params.get('mode') === 'store' ||
+        params.get('store') === '1' ||
+        params.get('mode') === 'customer' ||
+        window.location.hash === '#store';
+      setIsCustomerMode(isStore);
+    };
+
+    window.addEventListener('popstate', handleUrlChange);
+    window.addEventListener('hashchange', handleUrlChange);
+    return () => {
+      window.removeEventListener('popstate', handleUrlChange);
+      window.removeEventListener('hashchange', handleUrlChange);
+    };
+  }, []);
 
   // Global modals
   const [isPriceCheckerOpen, setIsPriceCheckerOpen] = useState(false);
@@ -613,6 +647,29 @@ export default function App() {
   const cartItemCount = cart.reduce((sum, item) => sum + item.quantity, 0);
   const cartGrandTotal = cart.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0);
 
+  // If customer is accessing via online portal link (?mode=store)
+  if (isCustomerMode) {
+    return (
+      <CustomerStorefrontView
+        products={products}
+        settings={settings}
+        categories={activeCategories}
+        isCustomerViewOnly={true}
+        onBackToAdmin={() => {
+          if (typeof window !== 'undefined') {
+            const url = new URL(window.location.href);
+            url.searchParams.delete('mode');
+            url.searchParams.delete('store');
+            url.searchParams.delete('customer');
+            window.history.pushState({}, '', url.pathname);
+          }
+          setIsCustomerMode(false);
+          setActiveTab('pos');
+        }}
+      />
+    );
+  }
+
   return (
     <div className={`min-h-screen flex flex-col font-sans transition-colors duration-200 ${
       isRoseTheme
@@ -1019,6 +1076,24 @@ export default function App() {
             <BarChart3 className="w-3.5 h-3.5" />
             <span>Benta at Ulat</span>
           </button>
+
+          {/* Online Customer Storefront Tab */}
+          <button
+            type="button"
+            onClick={() => setActiveTab('customer-store')}
+            className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-2 transition-all whitespace-nowrap shrink-0 ${
+              activeTab === 'customer-store'
+                ? isRoseTheme ? 'bg-rose-600 text-white shadow-xs' : 'bg-emerald-600 text-white shadow-xs'
+                : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+            }`}
+            title="Buksan ang Online Customer Catalog para sa mga customers"
+          >
+            <Globe className="w-3.5 h-3.5 text-sky-400" />
+            <span>Online Tindahan</span>
+            <span className="text-[10px] bg-sky-500/20 text-sky-300 border border-sky-500/30 px-1.5 py-0.2 rounded-full font-bold">
+              Customer View
+            </span>
+          </button>
         </div>
       </header>
 
@@ -1054,6 +1129,7 @@ export default function App() {
             onOpenPriceChecker={() => setIsPriceCheckerOpen(true)}
             categories={activeCategories}
             onOpenManageCategories={() => setIsCategoryModalOpen(true)}
+            onAddProduct={handleAddProduct}
           />
         )}
 
@@ -1093,6 +1169,16 @@ export default function App() {
         )}
 
         {activeTab === 'sales' && <SalesHistoryView sales={sales} />}
+
+        {activeTab === 'customer-store' && (
+          <CustomerStorefrontView
+            products={products}
+            settings={settings}
+            categories={activeCategories}
+            isCustomerViewOnly={false}
+            onBackToAdmin={() => setActiveTab('pos')}
+          />
+        )}
       </main>
 
       {/* Mobile-First Ergonomic Bottom Navigation Bar (md:hidden) */}
@@ -1186,7 +1272,7 @@ export default function App() {
         <button
           type="button"
           onClick={() => setActiveTab('sales')}
-          className={`flex flex-col items-center justify-center py-1 px-2.5 rounded-xl transition-all ${
+          className={`flex flex-col items-center justify-center py-1 px-2 rounded-xl transition-all ${
             activeTab === 'sales'
               ? isRoseTheme ? 'text-rose-400 font-bold scale-105' : 'text-emerald-400 font-bold scale-105'
               : 'text-slate-400 hover:text-slate-200'
@@ -1194,6 +1280,21 @@ export default function App() {
         >
           <BarChart3 className="w-5 h-5 mb-0.5" />
           <span className="text-[10px]">Ulat</span>
+        </button>
+
+        {/* Online Customer Storefront */}
+        <button
+          type="button"
+          onClick={() => setActiveTab('customer-store')}
+          className={`flex flex-col items-center justify-center py-1 px-2 rounded-xl transition-all ${
+            activeTab === 'customer-store'
+              ? isRoseTheme ? 'text-rose-400 font-bold scale-105' : 'text-sky-400 font-bold scale-105'
+              : 'text-slate-400 hover:text-slate-200'
+          }`}
+          title="Online Customer Storefront"
+        >
+          <Globe className="w-5 h-5 mb-0.5" />
+          <span className="text-[10px]">Online</span>
         </button>
       </nav>
 

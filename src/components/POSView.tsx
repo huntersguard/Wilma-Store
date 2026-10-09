@@ -32,6 +32,8 @@ import {
   ShoppingBag,
   Calendar,
   Wallet,
+  UtensilsCrossed,
+  PlusCircle,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { playScanBeep, playCheckoutChime, playWarningSound } from '../utils/audio';
@@ -48,6 +50,7 @@ interface POSViewProps {
   onOpenPriceChecker: () => void;
   categories?: string[];
   onOpenManageCategories?: () => void;
+  onAddProduct?: (product: Omit<Product, 'id' | 'updatedAt'>) => void;
 }
 
 export const POSView: React.FC<POSViewProps> = ({
@@ -60,11 +63,21 @@ export const POSView: React.FC<POSViewProps> = ({
   onOpenPriceChecker,
   categories,
   onOpenManageCategories,
+  onAddProduct,
 }) => {
   const [posMode, setPosMode] = useState<POSMode>(initialMode);
   const [search, setSearch] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('All Items');
   const [isScannerOpen, setIsScannerOpen] = useState(false);
+
+  // Quick Non-Barcoded Grocery / Tingi Item Modal
+  const [isQuickCustomOpen, setIsQuickCustomOpen] = useState(false);
+  const [customName, setCustomName] = useState('');
+  const [customPrice, setCustomPrice] = useState<number | ''>('');
+  const [customQty, setCustomQty] = useState<number>(1);
+  const [customUnit, setCustomUnit] = useState<string>('pc');
+  const [customSaveInventory, setCustomSaveInventory] = useState<boolean>(false);
+  const [customError, setCustomError] = useState<string | null>(null);
 
   // Toast feedback state
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -230,6 +243,82 @@ export const POSView: React.FC<POSViewProps> = ({
     showToast('Nalinis na ang bayarin.');
   };
 
+  const handleOpenQuickCustom = () => {
+    setCustomName('');
+    setCustomPrice('');
+    setCustomQty(1);
+    setCustomUnit('pc');
+    setCustomSaveInventory(false);
+    setCustomError(null);
+    setIsQuickCustomOpen(true);
+  };
+
+  const applyCustomPreset = (name: string, price: number, unit = 'pc') => {
+    setCustomName(name);
+    setCustomPrice(price);
+    setCustomUnit(unit);
+    setCustomError(null);
+  };
+
+  const handleAddQuickCustomSubmit = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    const cleanName = customName.trim();
+    if (!cleanName) {
+      setCustomError('Pakilagay ang pangalan ng paninda (hal. Candy, Yelo, Sachet).');
+      return;
+    }
+    const numPrice = typeof customPrice === 'number' ? customPrice : parseFloat(String(customPrice));
+    if (isNaN(numPrice) || numPrice <= 0) {
+      setCustomError('Pakilagay ang wastong presyo ng benta (hal. ₱10).');
+      return;
+    }
+    const qty = Math.max(1, customQty || 1);
+
+    const quickProduct: Product = {
+      id: `custom-${Date.now()}`,
+      name: cleanName,
+      barcode: `GROCERY-${Date.now().toString().slice(-5)}`,
+      category: 'Tingi & Groceries',
+      unit: customUnit || 'pc',
+      costPrice: 0, // Puhunan hindi kailangan ayon sa may-ari
+      sellingPrice: numPrice,
+      stock: 999,
+      minStock: 5,
+      updatedAt: new Date().toISOString(),
+      notes: 'Walang barcode / Manual added grocery item',
+    };
+
+    if (customSaveInventory && onAddProduct) {
+      onAddProduct({
+        name: quickProduct.name,
+        barcode: quickProduct.barcode,
+        category: quickProduct.category,
+        unit: quickProduct.unit,
+        costPrice: quickProduct.costPrice,
+        sellingPrice: quickProduct.sellingPrice,
+        stock: quickProduct.stock,
+        minStock: quickProduct.minStock,
+        notes: quickProduct.notes,
+      });
+    }
+
+    setCart((prev) => {
+      const existing = prev.find(
+        (item) => item.product.name.toLowerCase() === cleanName.toLowerCase() && item.unitPrice === numPrice
+      );
+      if (existing) {
+        return prev.map((item) =>
+          item === existing ? { ...item, quantity: item.quantity + qty } : item
+        );
+      }
+      return [...prev, { product: quickProduct, quantity: qty, unitPrice: numPrice }];
+    });
+
+    playScanBeep();
+    showToast(`✓ Naidagdag: ${cleanName} (₱${numPrice.toFixed(2)} × ${qty} = ₱${(numPrice * qty).toFixed(2)})`);
+    setIsQuickCustomOpen(false);
+  };
+
   const lastScanProcessedTimeRef = useRef<number>(0);
 
   const handleBarcodeScanned = (scannedBarcode: string) => {
@@ -370,6 +459,18 @@ export const POSView: React.FC<POSViewProps> = ({
           >
             <Camera className="w-4 h-4" />
             <span className="hidden sm:inline">Camera Scan</span>
+          </button>
+
+          {/* Quick Walang Barcode / Menudo Button */}
+          <button
+            type="button"
+            onClick={handleOpenQuickCustom}
+            className="px-3 sm:px-4 py-2.5 bg-amber-600 hover:bg-amber-500 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 shadow-sm transition-all shrink-0 active:scale-95 border border-amber-400/30"
+            title="Magdagdag ng grocery paninda o tingi na walang barcode"
+          >
+            <PlusCircle className="w-4 h-4 text-amber-200" />
+            <span className="hidden sm:inline">Walang Barcode / Tingi</span>
+            <span className="sm:hidden">Walang Barcode</span>
           </button>
         </div>
 
@@ -683,13 +784,24 @@ export const POSView: React.FC<POSViewProps> = ({
                 {totalItemsCount} pcs
               </span>
             </div>
-            <button
-              type="button"
-              onClick={() => setPosMode('catalog')}
-              className="text-xs text-emerald-400 hover:underline flex items-center gap-1"
-            >
-              <Plus className="w-3.5 h-3.5" /> Dagdag Paninda
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleOpenQuickCustom}
+                className="px-2.5 py-1 bg-amber-600/20 hover:bg-amber-600 text-amber-300 hover:text-white border border-amber-500/40 rounded-lg text-xs font-semibold flex items-center gap-1 transition-colors"
+                title="Magdagdag ng grocery paninda o tingi na walang barcode"
+              >
+                <PlusCircle className="w-3.5 h-3.5" />
+                <span>+ Walang Barcode / Tingi</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setPosMode('catalog')}
+                className="text-xs text-emerald-400 hover:underline flex items-center gap-1"
+              >
+                <Plus className="w-3.5 h-3.5" /> Dagdag Paninda
+              </button>
+            </div>
           </div>
 
           {/* Cart Items List */}
@@ -705,14 +817,24 @@ export const POSView: React.FC<POSViewProps> = ({
                     Pumili ng mga paninda sa catalog o i-scan ang barcode gamit ang cellphone camera.
                   </p>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setPosMode('catalog')}
-                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition-colors inline-flex items-center gap-1.5 shadow-md"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>Pumili ng Paninda</span>
-                </button>
+                <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setPosMode('catalog')}
+                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition-colors inline-flex items-center gap-1.5 shadow-md"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Pumili ng Paninda</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleOpenQuickCustom}
+                    className="px-4 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded-xl text-xs font-bold transition-colors inline-flex items-center gap-1.5 shadow-md"
+                  >
+                    <PlusCircle className="w-3.5 h-3.5" />
+                    <span>Walang Barcode / Tingi</span>
+                  </button>
+                </div>
               </div>
             ) : (
               cart.map((item) => (
@@ -1325,6 +1447,235 @@ export const POSView: React.FC<POSViewProps> = ({
                 Oo, Burahin
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Quick Non-Barcoded Grocery / Tingi Item Modal */}
+      {isQuickCustomOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-150 overflow-y-auto">
+          <div className="relative w-full max-w-lg bg-slate-900 border border-slate-800 rounded-3xl shadow-2xl p-5 sm:p-6 space-y-4 my-auto">
+            {/* Header */}
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <div className="flex items-center gap-3">
+                <div className="w-11 h-11 rounded-2xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-amber-400 shrink-0 shadow-inner">
+                  <Package className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-base sm:text-lg font-bold text-white flex items-center gap-2">
+                    <span>Dagdag Paninda na Walang Barcode</span>
+                    <span className="text-[10px] bg-amber-500/20 text-amber-300 px-2 py-0.5 rounded-full font-semibold border border-amber-500/30">
+                      Tingi / Grocery
+                    </span>
+                  </h3>
+                  <p className="text-xs text-slate-400">
+                    Para sa tingi, repacked mantika, kendi, yelo, o grocery paninda na walang barcode
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsQuickCustomOpen(false)}
+                className="w-8 h-8 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white flex items-center justify-center transition-colors"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Quick Grocery Presets for Sari-Sari Store (NO Ulam, NO Bigas) */}
+            <div>
+              <label className="text-xs font-semibold text-slate-300 block mb-1.5">
+                ⚡ Mabilisang Pagpili (1-Tap Grocery Presets):
+              </label>
+              <div className="flex flex-wrap gap-1.5">
+                {[
+                  { name: 'Candy / Tingi', price: 1, unit: 'pc' },
+                  { name: 'Yelo (1 Plastik)', price: 3, unit: 'plastic' },
+                  { name: 'Repacked Mantika', price: 10, unit: 'plastic' },
+                  { name: 'Plastik / Sando Bag', price: 2, unit: 'pc' },
+                  { name: 'Kape Sachet', price: 15, unit: 'sachet' },
+                  { name: 'Sigarilyo Tingi', price: 10, unit: 'pc' },
+                  { name: 'Grocery Tingi', price: 5, unit: 'pc' },
+                  { name: 'Tingi Item ₱20', price: 20, unit: 'pc' },
+                ].map((item) => (
+                  <button
+                    key={item.name}
+                    type="button"
+                    onClick={() => applyCustomPreset(item.name, item.price, item.unit)}
+                    className="px-2.5 py-1 rounded-lg bg-slate-950 hover:bg-amber-600/20 hover:border-amber-500/50 border border-slate-800 text-[11px] text-slate-300 hover:text-amber-300 font-medium transition-all"
+                  >
+                    <span>{item.name}</span>{' '}
+                    <span className="text-amber-400 font-bold font-mono">₱{item.price}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Error banner */}
+            {customError && (
+              <div className="p-2.5 bg-rose-950/80 border border-rose-800 rounded-xl text-xs text-rose-300 flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 shrink-0 text-rose-400" />
+                <span>{customError}</span>
+              </div>
+            )}
+
+            {/* Form Fields - Only Paninda Name, Presyo ng Benta, Dami & Yunit (NO Puhunan) */}
+            <form onSubmit={handleAddQuickCustomSubmit} className="space-y-3.5">
+              <div>
+                <label className="text-xs font-semibold text-slate-300 block mb-1">
+                  Pangalan ng Paninda / Grocery Item <span className="text-rose-400">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={customName}
+                  onChange={(e) => {
+                    setCustomName(e.target.value);
+                    if (customError) setCustomError(null);
+                  }}
+                  placeholder="Hal. Kendi, Yelo, Repacked Mantika, etc."
+                  className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500 rounded-xl px-3.5 py-2.5 text-xs sm:text-sm text-white placeholder-slate-500 focus:outline-none"
+                  autoFocus
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                {/* Selling Price (Presyo ng Benta) */}
+                <div>
+                  <label className="text-xs font-semibold text-slate-300 block mb-1">
+                    Presyo ng Benta (₱ bawat isa) <span className="text-rose-400">*</span>
+                  </label>
+                  <div className="relative">
+                    <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-amber-400 font-bold font-mono text-sm">
+                      ₱
+                    </span>
+                    <input
+                      type="number"
+                      step="any"
+                      min="0"
+                      value={customPrice}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setCustomPrice(val === '' ? '' : parseFloat(val));
+                        if (customError) setCustomError(null);
+                      }}
+                      placeholder="0.00"
+                      className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500 rounded-xl pl-8 pr-3 py-2.5 text-xs sm:text-sm text-white font-mono font-bold placeholder-slate-500 focus:outline-none"
+                    />
+                  </div>
+                </div>
+
+                {/* Quantity with +/- stepper */}
+                <div>
+                  <label className="text-xs font-semibold text-slate-300 block mb-1">
+                    Dami / Quantity
+                  </label>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setCustomQty((q) => Math.max(1, q - 1))}
+                      className="w-10 h-10 rounded-xl bg-slate-950 hover:bg-slate-800 active:scale-95 border border-slate-800 text-slate-300 font-bold flex items-center justify-center transition-colors shrink-0"
+                      title="Bawasan"
+                    >
+                      <Minus className="w-3.5 h-3.5" />
+                    </button>
+                    <input
+                      type="number"
+                      min="1"
+                      value={customQty}
+                      onChange={(e) => setCustomQty(Math.max(1, parseInt(e.target.value) || 1))}
+                      className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500 rounded-xl py-2.5 text-center text-xs sm:text-sm text-white font-mono font-bold focus:outline-none"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setCustomQty((q) => q + 1)}
+                      className="w-10 h-10 rounded-xl bg-slate-950 hover:bg-slate-800 active:scale-95 border border-slate-800 text-slate-300 font-bold flex items-center justify-center transition-colors shrink-0"
+                      title="Dagdagan"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Unit (Sukat ng Paninda) */}
+              <div>
+                <label className="text-xs font-semibold text-slate-300 block mb-1">
+                  Yunit (Sukat)
+                </label>
+                <div className="grid grid-cols-4 gap-1.5">
+                  {[
+                    { id: 'pc', label: 'pc (piraso)' },
+                    { id: 'pack', label: 'pack' },
+                    { id: 'sachet', label: 'sachet' },
+                    { id: 'plastic', label: 'plastic/supot' },
+                    { id: 'bottle', label: 'bote' },
+                    { id: 'can', label: 'can/lata' },
+                    { id: 'box', label: 'box' },
+                    { id: 'bar', label: 'bar/kaha' },
+                  ].map((u) => (
+                    <button
+                      key={u.id}
+                      type="button"
+                      onClick={() => setCustomUnit(u.id)}
+                      className={`py-1.5 px-2 text-[11px] rounded-lg border font-medium transition-all ${
+                        customUnit === u.id
+                          ? 'bg-amber-600 text-white border-amber-500 font-bold shadow-xs'
+                          : 'bg-slate-950 text-slate-400 border-slate-800 hover:text-white'
+                      }`}
+                    >
+                      {u.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Checkbox: Save to inventory */}
+              <label className="flex items-start gap-2.5 p-3 rounded-xl bg-slate-950/70 border border-slate-800/80 cursor-pointer hover:border-slate-700 transition-colors">
+                <input
+                  type="checkbox"
+                  checked={customSaveInventory}
+                  onChange={(e) => setCustomSaveInventory(e.target.checked)}
+                  className="mt-0.5 rounded border-slate-700 text-amber-500 focus:ring-amber-500 bg-slate-900"
+                />
+                <div className="text-xs">
+                  <span className="font-semibold text-slate-200 block">
+                    I-save din ito sa listahan ng Imbentaryo
+                  </span>
+                  <span className="text-slate-400 text-[11px] block mt-0.5">
+                    Kusang idadagdag sa Imbentaryo para mabilis mahanap at ma-click sa paninda sa susunod
+                  </span>
+                </div>
+              </label>
+
+              {/* Subtotal calculation indicator */}
+              <div className="p-3 rounded-xl bg-amber-950/40 border border-amber-500/30 flex items-center justify-between text-xs">
+                <span className="text-amber-200/90 font-medium">Kabuuan ng Aytem:</span>
+                <span className="text-base font-extrabold text-amber-400 font-mono">
+                  ₱
+                  {(
+                    (typeof customPrice === 'number' ? customPrice : 0) * (customQty || 1)
+                  ).toFixed(2)}
+                </span>
+              </div>
+
+              {/* Footer Buttons */}
+              <div className="flex items-center justify-end gap-2.5 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setIsQuickCustomOpen(false)}
+                  className="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-semibold transition-colors"
+                >
+                  Kanselahin
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2.5 bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-500 hover:to-amber-600 text-white font-bold rounded-xl text-xs sm:text-sm flex items-center gap-2 shadow-lg shadow-amber-950/40 transition-all active:scale-95"
+                >
+                  <PlusCircle className="w-4 h-4" />
+                  <span>Idagdag sa Bayarin</span>
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
