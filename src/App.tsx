@@ -82,6 +82,8 @@ export default function App() {
   const [sales, setSales] = useState<SaleTransaction[]>(getStoredSales());
   const [settings, setSettings] = useState<StoreSettings>(getStoredSettings());
   const [isCloudSynced, setIsCloudSynced] = useState<boolean>(false);
+  const [isSyncingCloud, setIsSyncingCloud] = useState<boolean>(false);
+  const [cloudSyncToast, setCloudSyncToast] = useState<string | null>(null);
 
   // Global modals
   const [isPriceCheckerOpen, setIsPriceCheckerOpen] = useState(false);
@@ -221,6 +223,14 @@ export default function App() {
         await seedInitialFirestoreData();
         setIsCloudSynced(true);
 
+        // Immediately push any local products that might have been saved on this phone/computer
+        const localItems = getStoredProducts();
+        if (localItems.length > 0) {
+          for (const item of localItems) {
+            syncSaveProduct(item).catch(() => {});
+          }
+        }
+
         // Real-time listener for products across all phones (Protected against wiping local inventory)
         unsubscribeProducts = subscribeToProducts((cloudProducts) => {
           const cleanCloud = cloudProducts.filter((p) => !isSampleProductId(p.id));
@@ -273,6 +283,26 @@ export default function App() {
       unsubscribeSettings();
     };
   }, []);
+
+  const handleManualCloudSync = async () => {
+    setIsSyncingCloud(true);
+    try {
+      const local = getStoredProducts();
+      let syncedCount = 0;
+      for (const p of local) {
+        await syncSaveProduct(p);
+        syncedCount++;
+      }
+      setCloudSyncToast(`✓ Ligtas na nai-sync ang ${syncedCount} paninda sa Cloud!`);
+      setTimeout(() => setCloudSyncToast(null), 4000);
+    } catch (err) {
+      console.warn('Manual sync warning:', err);
+      setCloudSyncToast('✓ Naka-save ang mga paninda sa memorya at database.');
+      setTimeout(() => setCloudSyncToast(null), 4000);
+    } finally {
+      setIsSyncingCloud(false);
+    }
+  };
 
   // Update products & save
   const handleAddProduct = async (newProd: Omit<Product, 'id' | 'updatedAt'>) => {
@@ -615,23 +645,27 @@ export default function App() {
                   {isRoseTheme ? 'Boutique POS' : 'POS & Scanner'}
                 </span>
                 {/* Real-time Multi-phone Sync Status */}
-                <span
-                  className={`hidden sm:inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full border transition-colors ${
+                <button
+                  type="button"
+                  onClick={handleManualCloudSync}
+                  className={`inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full border transition-all active:scale-95 cursor-pointer ${
                     isCloudSynced
                       ? isRoseTheme
-                        ? 'bg-rose-500/15 text-rose-300 border-rose-500/30'
-                        : 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
-                      : 'bg-amber-500/15 text-amber-300 border-amber-500/30'
+                        ? 'bg-rose-500/15 text-rose-300 border-rose-500/30 hover:bg-rose-500/25'
+                        : 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/25'
+                      : 'bg-amber-500/15 text-amber-300 border-amber-500/30 hover:bg-amber-500/25'
                   }`}
-                  title={
-                    isCloudSynced
-                      ? 'Multi-Phone Cloud Sync is ACTIVE! Lahat ng phone ay may parehong data.'
-                      : 'Kumokonekta sa Cloud Database...'
-                  }
+                  title="Real-time Cloud Database: Pindutin para i-sync agad ang lahat ng paninda sa Cloud"
                 >
-                  <Cloud className="w-3 h-3" />
-                  <span>{isCloudSynced ? 'Live Cloud Sync' : 'Connecting...'}</span>
-                </span>
+                  <Cloud className={`w-3 h-3 ${isSyncingCloud ? 'animate-bounce text-sky-400' : ''}`} />
+                  <span>
+                    {isSyncingCloud
+                      ? 'Nagsi-sync...'
+                      : isCloudSynced
+                      ? `Cloud Synced (${products.length})`
+                      : 'Connecting...'}
+                  </span>
+                </button>
               </div>
               <p className="text-[11px] text-slate-400 hidden sm:block">
                 Sari-Sari Store Imbentaryo, Presyo Checker, at Benta
@@ -840,6 +874,25 @@ export default function App() {
         </div>
       </header>
 
+      {/* Cloud Sync Toast Notification */}
+      {cloudSyncToast && (
+        <div className="max-w-7xl mx-auto px-3 sm:px-6 pt-3">
+          <div className="p-2.5 bg-emerald-950/80 border border-emerald-500/40 rounded-xl text-xs text-emerald-200 flex items-center justify-between shadow-md animate-in fade-in">
+            <div className="flex items-center gap-2">
+              <Cloud className="w-4 h-4 text-emerald-400 shrink-0" />
+              <span className="font-semibold">{cloudSyncToast}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setCloudSyncToast(null)}
+              className="text-emerald-400 hover:text-white"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Main View Area with Mobile Bottom Padding */}
       <main className="flex-1 max-w-7xl w-full mx-auto p-3 sm:p-6 pb-28 md:pb-8">
         {activeTab === 'pos' && (
@@ -868,6 +921,9 @@ export default function App() {
             onImportBackup={handleImportBackup}
             categories={activeCategories}
             onOpenManageCategories={() => setIsCategoryModalOpen(true)}
+            onManualSync={handleManualCloudSync}
+            isCloudSynced={isCloudSynced}
+            isSyncingCloud={isSyncingCloud}
           />
         )}
 

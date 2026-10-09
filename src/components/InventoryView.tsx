@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Product } from '../types';
 import { DEFAULT_CATEGORIES } from '../utils/sampleData';
 import { BarcodeScannerModal } from './BarcodeScannerModal';
+import { compressProductImage } from '../utils/imageUtils';
 import {
   Plus,
   Search,
@@ -31,11 +32,14 @@ interface InventoryViewProps {
   onDeleteProduct: (productId: string) => void;
   onClearAllProducts?: () => void;
   onQuickAdjustStock: (productId: string, delta: number) => void;
-  onExportBackup: () => void;
+  onExportBackup?: () => void;
   onImportBackup: (json: string) => void;
   onResetDefaults?: () => void;
   categories?: string[];
   onOpenManageCategories?: () => void;
+  onManualSync?: () => void;
+  isCloudSynced?: boolean;
+  isSyncingCloud?: boolean;
 }
 
 export const InventoryView: React.FC<InventoryViewProps> = ({
@@ -49,6 +53,9 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
   onImportBackup,
   categories = DEFAULT_CATEGORIES,
   onOpenManageCategories,
+  onManualSync,
+  isCloudSynced = false,
+  isSyncingCloud = false,
 }) => {
   const [search, setSearch] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('All Items');
@@ -134,22 +141,38 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
     playScanBeep();
   };
 
-  const handleProductPhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleProductPhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (evt) => {
-      const dataUrl = evt.target?.result as string;
-      if (dataUrl) {
-        setFormData((prev) => ({ ...prev, imageUrl: dataUrl }));
+    try {
+      // Compress phone camera photo to crisp ~25KB-35KB thumbnail
+      const compressedUrl = await compressProductImage(file, 400, 400, 0.75);
+      if (compressedUrl) {
+        setFormData((prev) => ({ ...prev, imageUrl: compressedUrl }));
       }
-    };
-    reader.readAsDataURL(file);
+    } catch (err) {
+      console.warn('Could not compress photo:', err);
+      const reader = new FileReader();
+      reader.onload = (evt) => {
+        const dataUrl = evt.target?.result as string;
+        if (dataUrl) {
+          setFormData((prev) => ({ ...prev, imageUrl: dataUrl }));
+        }
+      };
+      reader.readAsDataURL(file);
+    }
   };
 
-  const handleSaveAdd = (e: React.FormEvent) => {
+  const handleSaveAdd = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.name.trim() || !formData.barcode.trim()) return;
+
+    let finalImageUrl = formData.imageUrl.trim();
+    if (finalImageUrl && finalImageUrl.length > 70000) {
+      try {
+        finalImageUrl = await compressProductImage(finalImageUrl, 360, 360, 0.70);
+      } catch {}
+    }
 
     onAddProduct({
       name: formData.name.trim(),
@@ -160,16 +183,23 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
       sellingPrice: Number(formData.sellingPrice) || 0,
       stock: Number(formData.stock) || 0,
       minStock: Number(formData.minStock) || 5,
-      imageUrl: formData.imageUrl.trim() || '',
+      imageUrl: finalImageUrl,
       notes: formData.notes.trim() || '',
     });
 
     setIsAddModalOpen(false);
   };
 
-  const handleSaveEdit = (e: React.FormEvent) => {
+  const handleSaveEdit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingProduct) return;
+
+    let finalImageUrl = formData.imageUrl.trim();
+    if (finalImageUrl && finalImageUrl.length > 70000) {
+      try {
+        finalImageUrl = await compressProductImage(finalImageUrl, 360, 360, 0.70);
+      } catch {}
+    }
 
     onUpdateProduct({
       ...editingProduct,
@@ -181,7 +211,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
       sellingPrice: Number(formData.sellingPrice) || 0,
       stock: Number(formData.stock) || 0,
       minStock: Number(formData.minStock) || 5,
-      imageUrl: formData.imageUrl.trim() || '',
+      imageUrl: finalImageUrl,
       notes: formData.notes.trim() || '',
       updatedAt: new Date().toISOString(),
     });
@@ -288,6 +318,31 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
               <Plus className="w-4 h-4" />
               <span>Magdagdag ng Paninda</span>
             </button>
+
+            {onManualSync && (
+              <button
+                type="button"
+                onClick={onManualSync}
+                disabled={isSyncingCloud}
+                className="px-3.5 py-2.5 bg-sky-950/60 hover:bg-sky-900/80 border border-sky-800/60 text-sky-300 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0 active:scale-95 shadow-xs"
+                title="I-sync ang lahat ng paninda sa Cloud Firestore para siguradong pareho sa cellphone at computer"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 text-sky-400 ${isSyncingCloud ? 'animate-spin' : ''}`} />
+                <span>{isSyncingCloud ? 'Nagsi-sync...' : 'I-sync sa Cloud'}</span>
+              </button>
+            )}
+
+            {onExportBackup && (
+              <button
+                type="button"
+                onClick={onExportBackup}
+                className="px-3 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-medium flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0"
+                title="I-save ang kumpletong backup file sa iyong device"
+              >
+                <Download className="w-3.5 h-3.5 text-emerald-400" />
+                <span className="hidden sm:inline">Backup File</span>
+              </button>
+            )}
 
             <button
               onClick={exportCSV}

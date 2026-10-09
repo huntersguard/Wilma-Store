@@ -28,7 +28,17 @@ export function saveStoredProducts(products: Product[]): void {
   try {
     const clean = products.filter((p: Product) => !isSampleProductId(p.id));
     localStorage.setItem(INITIALIZED_KEY, 'true');
-    localStorage.setItem(PRODUCTS_KEY, JSON.stringify(clean));
+    try {
+      localStorage.setItem(PRODUCTS_KEY, JSON.stringify(clean));
+    } catch (quotaErr) {
+      console.warn('LocalStorage quota issue, saving without oversized image payloads:', quotaErr);
+      // Strip oversized image payloads so vital product information is never lost
+      const lightweight = clean.map((p) => ({
+        ...p,
+        imageUrl: p.imageUrl && p.imageUrl.length > 50000 ? '' : p.imageUrl,
+      }));
+      localStorage.setItem(PRODUCTS_KEY, JSON.stringify(lightweight));
+    }
   } catch (err) {
     console.error('Error saving products:', err);
   }

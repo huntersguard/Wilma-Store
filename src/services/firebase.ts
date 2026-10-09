@@ -11,7 +11,7 @@ import {
   writeBatch,
 } from 'firebase/firestore';
 import { Product, SaleTransaction, StoreSettings } from '../types';
-import { INITIAL_PRODUCTS, DEFAULT_SETTINGS } from '../utils/sampleData';
+import { INITIAL_PRODUCTS, DEFAULT_SETTINGS, isSampleProductId } from '../utils/sampleData';
 import firebaseConfig from '../../firebase-applet-config.json';
 
 // Initialize Firebase App
@@ -34,8 +34,8 @@ export async function testFirestoreConnection(): Promise<boolean> {
 }
 
 /**
- * Helper to remove undefined fields from objects before saving to Firestore.
- * Firestore setDoc/batch.set crashes with "Unsupported field value: undefined".
+ * Helper to remove undefined fields and convert NaN to valid numbers before saving to Firestore.
+ * Firestore setDoc/batch.set crashes with "Unsupported field value: undefined" or "NaN".
  */
 export function cleanForFirestore<T extends Record<string, any>>(obj: T): T {
   const result: Record<string, any> = {};
@@ -43,10 +43,14 @@ export function cleanForFirestore<T extends Record<string, any>>(obj: T): T {
     if (value === undefined) {
       continue;
     }
-    if (Array.isArray(value)) {
+    if (typeof value === 'number') {
+      result[key] = Number.isNaN(value) ? 0 : value;
+    } else if (Array.isArray(value)) {
       result[key] = value.map((item) =>
         item !== null && typeof item === 'object' && !(item instanceof Date)
           ? cleanForFirestore(item)
+          : typeof item === 'number' && Number.isNaN(item)
+          ? 0
           : item
       );
     } else if (value !== null && typeof value === 'object' && !(value instanceof Date)) {
@@ -93,7 +97,7 @@ export async function loadSampleProductsDemo(): Promise<void> {
 }
 
 /**
- * Real-time listener for products across all phones
+ * Real-time listener for products across all phones & computers
  */
 export function subscribeToProducts(
   onUpdate: (products: Product[]) => void,
@@ -106,9 +110,8 @@ export function subscribeToProducts(
       const items: Product[] = [];
       snapshot.forEach((docSnap) => {
         const p = { ...(docSnap.data() as Product), id: docSnap.id };
-        // Discard any legacy demo products (prod-001 through prod-024)
-        if (p.id.startsWith('prod-00') || p.id.startsWith('prod-01') || p.id.startsWith('prod-02')) {
-          deleteDoc(doc(db, 'products', p.id)).catch(() => {});
+        // Never import legacy 24 demo items
+        if (isSampleProductId(p.id)) {
           return;
         }
         items.push(p);

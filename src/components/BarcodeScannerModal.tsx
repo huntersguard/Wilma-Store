@@ -165,7 +165,6 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
   const startCamera = async () => {
     try {
       setHasCameraError(null);
-      setIsScanning(true);
       await stopCamera();
 
       // Reset activity refs for new start
@@ -183,6 +182,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
       } else {
         await startHtml5QrcodeEngine(currentSessionId);
       }
+      setIsScanning(true);
     } catch (err: any) {
       console.error('Camera startup error:', err);
       // Fallback to Html5Qrcode if native engine threw
@@ -191,6 +191,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
         const currentSessionId = Date.now();
         scanSessionIdRef.current = currentSessionId;
         await startHtml5QrcodeEngine(currentSessionId);
+        setIsScanning(true);
       } catch (fallbackErr: any) {
         isScannerActiveRef.current = false;
         setIsScanning(false);
@@ -436,36 +437,55 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
 
   const setZoom = async (newZoom: number) => {
     setZoomLevel(newZoom);
-    const track = streamRef.current?.getVideoTracks()[0];
-    if (!track || !supportsZoom) return;
+
+    // 1. Digital Viewport Zoom: Instant GPU-accelerated magnification across ALL devices & iPhones
+    const nativeVideo = document.getElementById('native-scanner-video') as HTMLVideoElement | null;
+    const html5Video = document.querySelector(`#${scannerContainerId} video`) as HTMLVideoElement | null;
+    [nativeVideo, html5Video].forEach((v) => {
+      if (v) {
+        v.style.transform = `scale(${newZoom})`;
+        v.style.transformOrigin = 'center center';
+        v.style.transition = 'transform 0.22s cubic-bezier(0.2, 0, 0, 1)';
+      }
+    });
+
+    // 2. Hardware camera zoom if supported by device
     try {
-      await (track as any).applyConstraints({
-        advanced: [{ zoom: newZoom }],
-      });
-    } catch (err) {
-      console.warn('Zoom error:', err);
-    }
+      const track = streamRef.current?.getVideoTracks()[0];
+      if (track && typeof (track as any).applyConstraints === 'function') {
+        await (track as any).applyConstraints({
+          advanced: [{ zoom: newZoom }],
+        });
+      }
+    } catch {}
   };
 
   /**
    * Helper: Crop source canvas to the exact center Crosshair Reticle (Region of Interest)
+   * Adjusted proportionally by current zoom level so zoomed barcodes remain razor-sharp
    */
   const cropCanvasToCrosshair = (
     sourceCanvas: HTMLCanvasElement,
     roiWidthRatio = 0.85,
-    roiHeightRatio = 0.65
+    roiHeightRatio = 0.65,
+    currentZoom = 1
   ): HTMLCanvasElement => {
     const cropCanvas = document.createElement('canvas');
-    const cropW = Math.max(100, Math.floor(sourceCanvas.width * roiWidthRatio));
-    const cropH = Math.max(100, Math.floor(sourceCanvas.height * roiHeightRatio));
+    const scale = Math.max(1, currentZoom);
+
+    // Crop the center region visible inside the reticle
+    const cropW = Math.max(80, Math.floor((sourceCanvas.width * roiWidthRatio) / scale));
+    const cropH = Math.max(80, Math.floor((sourceCanvas.height * roiHeightRatio) / scale));
     const startX = Math.max(0, Math.floor((sourceCanvas.width - cropW) / 2));
     const startY = Math.max(0, Math.floor((sourceCanvas.height - cropH) / 2));
 
-    cropCanvas.width = cropW;
-    cropCanvas.height = cropH;
+    cropCanvas.width = Math.min(1280, Math.floor(cropW * scale));
+    cropCanvas.height = Math.min(1280, Math.floor(cropH * scale));
     const ctx = cropCanvas.getContext('2d');
     if (ctx) {
-      ctx.drawImage(sourceCanvas, startX, startY, cropW, cropH, 0, 0, cropW, cropH);
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(sourceCanvas, startX, startY, cropW, cropH, 0, 0, cropCanvas.width, cropCanvas.height);
     }
     return cropCanvas;
   };
@@ -564,8 +584,8 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
       if (!ctx) throw new Error('Could not get canvas');
       ctx.drawImage(video, 0, 0, fullCanvas.width, fullCanvas.height);
 
-      // Pass 1: Cropped directly to the center Crosshair box
-      const crosshairCanvas = cropCanvasToCrosshair(fullCanvas, 0.85, 0.65);
+      // Pass 1: Cropped directly to the center Crosshair box using active zoom level
+      const crosshairCanvas = cropCanvasToCrosshair(fullCanvas, 0.85, 0.65, zoomLevel);
       let decoded = await decodeFromCanvasCandidate(crosshairCanvas);
       if (decoded) {
         handleBarcodeDetected(decoded);
@@ -767,13 +787,13 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
                 />
 
                 {/* Laser Overlay Guide with Clickable Crosshair Box */}
-                {isScanning && !hasCameraError && (
-                  <div className="absolute inset-0 flex flex-col items-center justify-center pb-8">
+                {!hasCameraError && (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center pb-8 pointer-events-none">
                     {/* Clickable crosshair reticle */}
                     <div
                       onClick={handleCaptureSnapshot}
                       title="Pindutin para kuhanin ang barcode sa loob ng kahon"
-                      className="relative w-[86%] max-w-[320px] h-38 sm:h-48 border-2 border-emerald-400 rounded-2xl shadow-[0_0_25px_rgba(16,185,129,0.35)] cursor-pointer pointer-events-auto flex items-center justify-center group active:scale-98 transition-transform"
+                      className="relative w-[86%] max-w-[320px] h-38 sm:h-48 border-2 border-emerald-400 rounded-2xl shadow-[0_0_25px_rgba(16,185,129,0.35)] cursor-pointer pointer-events-auto flex items-center justify-center group active:scale-95 transition-all"
                     >
                       {/* Corner marks */}
                       <span className="absolute -top-1.5 -left-1.5 w-5 h-5 border-t-3 border-l-3 border-emerald-400 rounded-tl-xl" />
@@ -785,8 +805,9 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
                       <div className="w-full h-0.5 bg-gradient-to-r from-transparent via-red-500 to-transparent shadow-[0_0_12px_#ef4444] animate-pulse absolute top-1/2 -translate-y-1/2 pointer-events-none" />
 
                       {/* Tap to scan hint inside reticle */}
-                      <span className="text-[10px] text-emerald-300 font-semibold bg-black/60 px-2 py-0.5 rounded-full border border-emerald-500/30 opacity-90 group-hover:opacity-100 transition-opacity pointer-events-none">
-                        👆 Tapat ang barcode dito
+                      <span className="text-[11px] text-emerald-200 font-bold bg-black/75 px-3 py-1 rounded-full border border-emerald-500/40 shadow-md group-hover:scale-105 transition-all pointer-events-none flex items-center gap-1.5">
+                        <Target className="w-3.5 h-3.5 text-emerald-400" />
+                        Pindutin Dito para Basahin
                       </span>
                     </div>
 
@@ -797,13 +818,13 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
                 )}
 
                 {/* Floating On-Screen Shutter Button DIRECTLY on the live camera screen */}
-                {isScanning && !hasCameraError && (
+                {!hasCameraError && (
                   <div className="absolute bottom-2 inset-x-0 flex flex-col items-center justify-center z-30 pointer-events-auto px-3">
                     <button
                       type="button"
                       onClick={handleCaptureSnapshot}
                       disabled={isProcessingPhoto}
-                      className="w-full max-w-[280px] py-2 px-3.5 bg-emerald-500 hover:bg-emerald-400 active:scale-95 text-slate-950 font-black rounded-full text-xs flex items-center justify-center gap-1.5 shadow-2xl shadow-emerald-950/80 border-2 border-white transition-all cursor-pointer"
+                      className="w-full max-w-[290px] py-2.5 px-4 bg-emerald-500 hover:bg-emerald-400 active:scale-95 text-slate-950 font-black rounded-full text-xs flex items-center justify-center gap-1.5 shadow-2xl shadow-emerald-950/80 border-2 border-white transition-all cursor-pointer"
                     >
                       <Target className="w-4 h-4 stroke-[3] animate-pulse text-slate-950 shrink-0" />
                       <span>📸 PINDUSTIN PARA KUNAN ANG CROSSHAIR</span>
@@ -885,7 +906,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
                 <button
                   type="button"
                   onClick={handleCaptureSnapshot}
-                  disabled={isProcessingPhoto || !isScanning}
+                  disabled={isProcessingPhoto}
                   className="w-full py-3 px-4 bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 hover:from-emerald-500 hover:to-teal-500 active:scale-98 disabled:opacity-50 text-white font-bold rounded-2xl text-xs sm:text-sm flex items-center justify-center gap-2.5 shadow-md shadow-emerald-950/50 transition-all border border-emerald-400/40"
                 >
                   <Target className="w-5 h-5 text-emerald-200 animate-pulse" />
