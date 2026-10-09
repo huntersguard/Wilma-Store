@@ -69,6 +69,8 @@ import {
   Shield,
   Sparkles,
   Palette,
+  RefreshCw,
+  SlidersHorizontal,
 } from 'lucide-react';
 import { playScanBeep, playWarningSound, playCheckoutChime } from './utils/audio';
 
@@ -92,6 +94,7 @@ export default function App() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
   const [isSoundEnabled, setIsSoundEnabled] = useState(true);
+  const [isQuickMenuOpen, setIsQuickMenuOpen] = useState(false);
 
   // 6-Digit Admin PIN Protection for Talaan ng Utang & Owner Recovery
   const [isUtangUnlocked, setIsUtangUnlocked] = useState(false);
@@ -622,79 +625,80 @@ export default function App() {
           ? 'bg-[#150f1d]/90 border-rose-950/60 shadow-lg shadow-rose-950/20'
           : 'bg-slate-900/90 border-slate-800'
       }`}>
-        <div className="max-w-7xl mx-auto px-3 sm:px-6 h-16 flex items-center justify-between gap-3">
+        <div className="max-w-7xl mx-auto px-3 sm:px-6 h-16 flex items-center justify-between gap-2 sm:gap-4">
           {/* Logo & Store Branding */}
-          <div className="flex items-center gap-3">
-            <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-extrabold text-base transition-all shadow-md ${
+          <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
+            <div className={`w-9 h-9 sm:w-10 sm:h-10 rounded-xl flex items-center justify-center font-extrabold text-base transition-all shadow-md shrink-0 ${
               isRoseTheme
                 ? 'bg-gradient-to-br from-rose-500 via-pink-500 to-rose-600 text-white shadow-rose-900/30'
                 : 'bg-gradient-to-br from-emerald-500 to-teal-600 text-slate-950'
             }`}>
-              {isRoseTheme ? <Sparkles className="w-5 h-5 text-white" /> : <Store className="w-5 h-5 text-slate-950" />}
+              {isRoseTheme ? <Sparkles className="w-4 h-4 sm:w-5 sm:h-5 text-white" /> : <Store className="w-4 h-4 sm:w-5 sm:h-5 text-slate-950" />}
             </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h1 className="font-extrabold text-white text-sm sm:text-base tracking-tight leading-tight">
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5 sm:gap-2">
+                <h1 className="font-extrabold text-white text-sm sm:text-base tracking-tight leading-tight truncate max-w-[125px] xs:max-w-[160px] sm:max-w-none">
                   {settings.storeName}
                 </h1>
-                <span className={`hidden md:inline text-[10px] uppercase font-bold px-2 py-0.5 rounded border transition-colors ${
+                <span className={`hidden md:inline text-[10px] uppercase font-bold px-2 py-0.5 rounded border transition-colors shrink-0 ${
                   isRoseTheme
                     ? 'text-pink-300 bg-pink-500/10 border-pink-500/25'
                     : 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20'
                 }`}>
                   {isRoseTheme ? 'Boutique POS' : 'POS & Scanner'}
                 </span>
-                {/* Real-time Multi-phone Sync Status */}
-                <button
-                  type="button"
-                  onClick={handleManualCloudSync}
-                  className={`inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full border transition-all active:scale-95 cursor-pointer ${
-                    isCloudSynced
-                      ? isRoseTheme
-                        ? 'bg-rose-500/15 text-rose-300 border-rose-500/30 hover:bg-rose-500/25'
-                        : 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/25'
-                      : 'bg-amber-500/15 text-amber-300 border-amber-500/30 hover:bg-amber-500/25'
-                  }`}
-                  title="Real-time Cloud Database: Pindutin para i-sync agad ang lahat ng paninda sa Cloud"
-                >
-                  <Cloud className={`w-3 h-3 ${isSyncingCloud ? 'animate-bounce text-sky-400' : ''}`} />
-                  <span>
-                    {isSyncingCloud
-                      ? 'Nagsi-sync...'
-                      : isCloudSynced
-                      ? `Cloud Synced (${products.length})`
-                      : 'Connecting...'}
-                  </span>
-                </button>
               </div>
-              <p className="text-[11px] text-slate-400 hidden sm:block">
+              <p className="text-[11px] text-slate-400 hidden sm:block truncate">
                 Sari-Sari Store Imbentaryo, Presyo Checker, at Benta
               </p>
             </div>
           </div>
 
-          {/* Quick Action Buttons */}
-          <div className="flex items-center gap-1.5 sm:gap-2">
-            {/* Gamitin sa Phone Button */}
+          {/* Quick Action Buttons & Compact Controls */}
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+            {/* PROMINENT "I-SYNC SA CLOUD" BUTTON - CLEAR, EASY TO FIND & ALWAYS VISIBLE */}
             <button
               type="button"
-              onClick={() => setIsPhoneModalOpen(true)}
-              className={`px-3 py-2 text-white font-semibold rounded-xl text-xs flex items-center gap-1.5 transition-all active:scale-95 shadow-xs ${
+              onClick={handleManualCloudSync}
+              disabled={isSyncingCloud}
+              className={`px-2.5 sm:px-3 py-1.5 sm:py-2 font-bold rounded-xl text-xs flex items-center gap-1.5 transition-all active:scale-95 border shadow-sm cursor-pointer shrink-0 ${
                 isRoseTheme
-                  ? 'bg-gradient-to-r from-rose-600 via-pink-600 to-rose-500 hover:from-rose-500 hover:to-pink-500'
-                  : 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500'
+                  ? 'bg-rose-500/20 hover:bg-rose-500/30 text-rose-200 border-rose-500/40 shadow-rose-950/30'
+                  : 'bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-200 border-emerald-500/40 shadow-emerald-950/30'
               }`}
-              title="Gamitin sa Telepono / I-install bilang Mobile App"
+              title="I-sync ang lahat ng paninda at benta sa Cloud Database ngayon"
             >
-              <Smartphone className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Gamitin sa Phone</span>
+              <RefreshCw className={`w-3.5 h-3.5 text-emerald-400 ${isSyncingCloud ? 'animate-spin text-sky-400' : ''}`} />
+              <span className="text-[11px] sm:text-xs">
+                {isSyncingCloud ? 'Nagsi-sync...' : 'I-sync sa Cloud'}
+              </span>
+              <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold text-white ${
+                isRoseTheme ? 'bg-pink-600' : 'bg-emerald-600'
+              }`}>
+                {products.length}
+              </span>
             </button>
 
-            {/* Presyo Check Button */}
+            {/* Camera Scanner Quick Trigger */}
+            <button
+              type="button"
+              onClick={() => setIsGlobalScannerOpen(true)}
+              className={`px-2.5 sm:px-3 py-1.5 sm:py-2 text-white font-semibold rounded-xl text-xs flex items-center gap-1.5 transition-all active:scale-95 shadow-sm shrink-0 ${
+                isRoseTheme
+                  ? 'bg-gradient-to-r from-rose-600 to-pink-600 hover:from-rose-500 hover:to-pink-500'
+                  : 'bg-emerald-600 hover:bg-emerald-500'
+              }`}
+              title="I-scan ang Barcode ng Paninda"
+            >
+              <Camera className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Scan</span>
+            </button>
+
+            {/* Desktop Only: Presyo Check & Gamitin sa Phone */}
             <button
               type="button"
               onClick={() => setIsPriceCheckerOpen(true)}
-              className={`px-3 py-2 font-semibold rounded-xl text-xs flex items-center gap-1.5 transition-all active:scale-95 border shadow-xs ${
+              className={`hidden md:flex px-3 py-2 font-semibold rounded-xl text-xs items-center gap-1.5 transition-all active:scale-95 border shadow-xs ${
                 isRoseTheme
                   ? 'bg-slate-900/80 hover:bg-slate-800 text-rose-300 border-rose-900/40'
                   : 'bg-slate-800 hover:bg-slate-700 text-emerald-400 border-slate-700/60'
@@ -702,60 +706,204 @@ export default function App() {
               title="Presyo Check"
             >
               <Tag className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Presyo Check</span>
+              <span>Presyo Check</span>
             </button>
 
-            {/* Camera Scanner Quick Trigger */}
             <button
               type="button"
-              onClick={() => setIsGlobalScannerOpen(true)}
-              className={`px-3 py-2 text-white font-semibold rounded-xl text-xs flex items-center gap-1.5 transition-all active:scale-95 shadow-sm ${
+              onClick={() => setIsPhoneModalOpen(true)}
+              className={`hidden lg:flex px-3 py-2 text-white font-semibold rounded-xl text-xs items-center gap-1.5 transition-all active:scale-95 shadow-xs ${
                 isRoseTheme
-                  ? 'bg-gradient-to-r from-rose-600 to-pink-600 hover:from-rose-500 hover:to-pink-500'
-                  : 'bg-emerald-600 hover:bg-emerald-500'
+                  ? 'bg-gradient-to-r from-rose-600 via-pink-600 to-rose-500 hover:from-rose-500 hover:to-pink-500'
+                  : 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500'
               }`}
-              title="I-scan ang Barcode"
+              title="Gamitin sa Telepono / I-install bilang Mobile App"
             >
-              <Camera className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Scan Barcode</span>
+              <Smartphone className="w-3.5 h-3.5" />
+              <span>Gamitin sa Phone</span>
             </button>
 
-            {/* Theme Toggle Button */}
-            <button
-              type="button"
-              onClick={toggleTheme}
-              className={`p-2 rounded-xl transition-all border flex items-center gap-1 ${
-                isRoseTheme
-                  ? 'bg-rose-500/10 border-rose-500/30 text-rose-300 hover:bg-rose-500/20'
-                  : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300 hover:bg-emerald-500/20'
-              }`}
-              title={isRoseTheme ? 'Kasalukuyang Tema: 🌸 Rose Quartz Boutique. Pindutin para lumipat sa Classic Emerald.' : 'Kasalukuyang Tema: 🌿 Classic Emerald Retail. Pindutin para lumipat sa Rose Quartz.'}
-            >
-              <Palette className="w-4 h-4" />
-              <span className="hidden lg:inline text-[11px] font-semibold">
-                {isRoseTheme ? '🌸 Rose' : '🌿 Emerald'}
-              </span>
-            </button>
+            {/* Desktop Only: Grouped Appearance, Speaker, & Settings Controls */}
+            <div className="hidden md:flex items-center gap-1 bg-slate-950/60 p-1 rounded-xl border border-slate-800/80">
+              {/* Appearance / Theme */}
+              <button
+                type="button"
+                onClick={toggleTheme}
+                className={`p-1.5 rounded-lg transition-all text-xs flex items-center gap-1 ${
+                  isRoseTheme
+                    ? 'text-pink-300 hover:bg-pink-500/20'
+                    : 'text-emerald-300 hover:bg-emerald-500/20'
+                }`}
+                title={isRoseTheme ? 'Tema: Rose Quartz Boutique. Pindutin para lumipat sa Classic Emerald.' : 'Tema: Classic Emerald Retail. Pindutin para lumipat sa Rose Quartz.'}
+              >
+                <Palette className="w-4 h-4" />
+                <span className="hidden xl:inline text-[11px] font-semibold">{isRoseTheme ? 'Rose' : 'Emerald'}</span>
+              </button>
 
-            {/* Sound Toggle */}
-            <button
-              type="button"
-              onClick={() => setIsSoundEnabled(!isSoundEnabled)}
-              className="p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-xl transition-colors"
-              title={isSoundEnabled ? 'Tunog: Naka-on' : 'Tunog: Naka-off'}
-            >
-              {isSoundEnabled ? <Volume2 className={`w-4 h-4 ${isRoseTheme ? 'text-rose-400' : 'text-emerald-400'}`} /> : <VolumeX className="w-4 h-4 text-slate-500" />}
-            </button>
+              {/* Speaker / Sound */}
+              <button
+                type="button"
+                onClick={() => setIsSoundEnabled(!isSoundEnabled)}
+                className="p-1.5 text-slate-400 hover:text-white rounded-lg transition-colors"
+                title={isSoundEnabled ? 'Tunog: Naka-on (May Tunog)' : 'Tunog: Naka-mute (Walang Tunog)'}
+              >
+                {isSoundEnabled ? <Volume2 className={`w-4 h-4 ${isRoseTheme ? 'text-rose-400' : 'text-emerald-400'}`} /> : <VolumeX className="w-4 h-4 text-slate-500" />}
+              </button>
 
-            {/* Settings & Backup Modal Trigger */}
-            <button
-              type="button"
-              onClick={() => setIsSettingsOpen(true)}
-              className="p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-xl transition-colors"
-              title="Store Settings & Backup"
-            >
-              <Settings className="w-4 h-4" />
-            </button>
+              {/* Settings */}
+              <button
+                type="button"
+                onClick={() => setIsSettingsOpen(true)}
+                className="p-1.5 text-slate-400 hover:text-white rounded-lg transition-colors"
+                title="Store Settings, PIN, at Backup"
+              >
+                <Settings className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Mobile-Only: Unified Quick Controls Menu (Appearance, Speaker, Settings) */}
+            <div className="relative md:hidden">
+              <button
+                type="button"
+                onClick={() => setIsQuickMenuOpen(!isQuickMenuOpen)}
+                className={`p-2 rounded-xl transition-all border flex items-center justify-center shrink-0 active:scale-95 ${
+                  isQuickMenuOpen
+                    ? isRoseTheme
+                      ? 'bg-rose-500 text-white border-rose-400 shadow-md'
+                      : 'bg-emerald-600 text-white border-emerald-400 shadow-md'
+                    : 'bg-slate-800/80 hover:bg-slate-700 text-slate-200 border-slate-700/80'
+                }`}
+                title="Pindutin para sa Appearance, Speaker, at Settings"
+              >
+                <SlidersHorizontal className="w-4 h-4" />
+              </button>
+
+              {/* Mobile Dropdown Popover */}
+              {isQuickMenuOpen && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setIsQuickMenuOpen(false)} />
+                  <div className={`absolute right-0 top-12 w-64 rounded-2xl border shadow-2xl p-2.5 z-50 space-y-2 backdrop-blur-xl animate-in fade-in duration-150 ${
+                    isRoseTheme
+                      ? 'bg-[#181024]/95 border-rose-900/60 shadow-rose-950/60 text-rose-50'
+                      : 'bg-slate-900/95 border-slate-800 shadow-slate-950/80 text-slate-100'
+                  }`}>
+                    {/* Header */}
+                    <div className="px-2 py-1 border-b border-slate-800/80 flex items-center justify-between text-xs font-bold text-slate-300">
+                      <span>Mga Kontrol (Settings)</span>
+                      <button
+                        type="button"
+                        onClick={() => setIsQuickMenuOpen(false)}
+                        className="text-slate-400 hover:text-white p-0.5"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+
+                    {/* Appearance (Tema) */}
+                    <div className="p-2 rounded-xl bg-slate-950/50 border border-slate-800/60 space-y-1.5">
+                      <div className="text-[11px] font-semibold text-slate-400 flex items-center gap-1.5">
+                        <Palette className="w-3.5 h-3.5 text-pink-400" />
+                        <span>Tema / Appearance:</span>
+                      </div>
+                      <div className="grid grid-cols-2 gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (!isRoseTheme) toggleTheme();
+                          }}
+                          className={`py-1.5 px-2 rounded-lg text-[11px] font-bold flex items-center justify-center gap-1 border transition-all ${
+                            isRoseTheme
+                              ? 'bg-rose-500/25 border-rose-500 text-rose-200 shadow-xs'
+                              : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
+                          }`}
+                        >
+                          <span>🌸 Rose</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (isRoseTheme) toggleTheme();
+                          }}
+                          className={`py-1.5 px-2 rounded-lg text-[11px] font-bold flex items-center justify-center gap-1 border transition-all ${
+                            !isRoseTheme
+                              ? 'bg-emerald-500/25 border-emerald-500 text-emerald-200 shadow-xs'
+                              : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
+                          }`}
+                        >
+                          <span>🌿 Emerald</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Speaker (Tunog) */}
+                    <button
+                      type="button"
+                      onClick={() => setIsSoundEnabled(!isSoundEnabled)}
+                      className="w-full p-2 rounded-xl bg-slate-950/50 hover:bg-slate-950 border border-slate-800/60 flex items-center justify-between text-xs transition-colors"
+                    >
+                      <div className="flex items-center gap-2">
+                        {isSoundEnabled ? (
+                          <Volume2 className="w-4 h-4 text-emerald-400" />
+                        ) : (
+                          <VolumeX className="w-4 h-4 text-slate-500" />
+                        )}
+                        <span className="font-semibold text-slate-200">Tunog (Speaker):</span>
+                      </div>
+                      <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${
+                        isSoundEnabled
+                          ? 'bg-emerald-500/20 text-emerald-300'
+                          : 'bg-slate-800 text-slate-400'
+                      }`}>
+                        {isSoundEnabled ? 'ON' : 'MUTE'}
+                      </span>
+                    </button>
+
+                    {/* Presyo Check */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsQuickMenuOpen(false);
+                        setIsPriceCheckerOpen(true);
+                      }}
+                      className="w-full p-2 rounded-xl bg-slate-950/50 hover:bg-slate-950 border border-slate-800/60 flex items-center gap-2 text-xs text-slate-200 transition-colors"
+                    >
+                      <Tag className="w-4 h-4 text-sky-400" />
+                      <span className="font-semibold">Presyo Check</span>
+                    </button>
+
+                    {/* Gamitin sa Phone */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsQuickMenuOpen(false);
+                        setIsPhoneModalOpen(true);
+                      }}
+                      className="w-full p-2 rounded-xl bg-slate-950/50 hover:bg-slate-950 border border-slate-800/60 flex items-center gap-2 text-xs text-slate-200 transition-colors"
+                    >
+                      <Smartphone className="w-4 h-4 text-pink-400" />
+                      <span className="font-semibold">Gamitin sa Phone (App)</span>
+                    </button>
+
+                    {/* Full Settings & Backup Trigger */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsQuickMenuOpen(false);
+                        setIsSettingsOpen(true);
+                      }}
+                      className={`w-full py-2 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 shadow-sm transition-all text-white ${
+                        isRoseTheme
+                          ? 'bg-gradient-to-r from-rose-600 to-pink-600 hover:from-rose-500 hover:to-pink-500'
+                          : 'bg-emerald-600 hover:bg-emerald-500'
+                      }`}
+                    >
+                      <Settings className="w-3.5 h-3.5" />
+                      <span>Mga Setting ng Tindahan</span>
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
           </div>
         </div>
 
@@ -1293,6 +1441,37 @@ export default function App() {
                 >
                   <Layers className="w-3.5 h-3.5" />
                   <span>I-edit ang mga Kategorya (Categories)</span>
+                </button>
+              </div>
+
+              {/* Cloud Database & Multi-Device Sync Section */}
+              <div className="pt-2 border-t border-slate-800 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold text-white flex items-center gap-1.5">
+                    <Cloud className="w-4 h-4 text-sky-400" />
+                    <span>Cloud Database & Device Sync:</span>
+                  </span>
+                  <span className="text-[10px] bg-emerald-500/20 text-emerald-300 font-bold px-2 py-0.5 rounded-full border border-emerald-500/30">
+                    Aktibo ({products.length} paninda)
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-400">
+                  Awtomatikong nai-save ang iyong imbentaryo sa Google Cloud para pareho at updated sa lahat ng cellphone at computer.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleManualCloudSync();
+                  }}
+                  disabled={isSyncingCloud}
+                  className={`w-full py-2.5 px-3 rounded-xl font-bold flex items-center justify-center gap-2 transition-all active:scale-95 text-xs cursor-pointer ${
+                    isRoseTheme
+                      ? 'bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/40 text-rose-200'
+                      : 'bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-200'
+                  }`}
+                >
+                  <RefreshCw className={`w-4 h-4 ${isSyncingCloud ? 'animate-spin text-sky-400' : 'text-emerald-400'}`} />
+                  <span>{isSyncingCloud ? 'Kasalukuyang Nagsi-sync sa Cloud...' : '🔄 I-sync Lahat sa Cloud Database Ngayon'}</span>
                 </button>
               </div>
 
