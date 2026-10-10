@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Product, CartItem, PaymentMethod, SaleTransaction } from '../types';
 import { CATEGORIES } from '../utils/sampleData';
-import { BarcodeScannerModal } from './BarcodeScannerModal';
+import { BarcodeScannerModal, BarcodeScanFeedback } from './BarcodeScannerModal';
 import {
   getAllDebtorsSummary,
   getCustomerCreditSummary,
@@ -69,6 +69,11 @@ export const POSView: React.FC<POSViewProps> = ({
   const [search, setSearch] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('All Items');
   const [isScannerOpen, setIsScannerOpen] = useState(false);
+  const [scanFeedback, setScanFeedback] = useState<BarcodeScanFeedback | null>(null);
+
+  // Pagination for catalog products: 20 items per page
+  const ITEMS_PER_PAGE = 20;
+  const [catalogPage, setCatalogPage] = useState<number>(1);
 
   // Quick Non-Barcoded Grocery / Tingi Item Modal
   const [isQuickCustomOpen, setIsQuickCustomOpen] = useState(false);
@@ -173,6 +178,19 @@ export const POSView: React.FC<POSViewProps> = ({
     return matchesSearch && matchesCategory;
   });
 
+  // Reset page when search or category changes
+  useEffect(() => {
+    setCatalogPage(1);
+  }, [search, selectedCategory]);
+
+  const totalCatalogPages = Math.max(1, Math.ceil(filteredProducts.length / ITEMS_PER_PAGE));
+  const activeCatalogPage = Math.min(catalogPage, totalCatalogPages);
+
+  const paginatedProducts = useMemo(() => {
+    const start = (activeCatalogPage - 1) * ITEMS_PER_PAGE;
+    return filteredProducts.slice(start, start + ITEMS_PER_PAGE);
+  }, [filteredProducts, activeCatalogPage]);
+
   const showToast = (msg: string) => {
     setToastMessage(msg);
     setTimeout(() => {
@@ -189,8 +207,8 @@ export const POSView: React.FC<POSViewProps> = ({
     }
 
     const now = Date.now();
-    // Anti-burst protection: when scanning or rapid tapping, ensure a minimum 1.8-second gap for the same product
-    if (suppressBeep && lastAddedMapRef.current[product.id] && now - lastAddedMapRef.current[product.id] < 1800) {
+    // Anti-burst protection: when scanning or rapid tapping, ensure a minimum 1.1-second gap for the same product
+    if (suppressBeep && lastAddedMapRef.current[product.id] && now - lastAddedMapRef.current[product.id] < 1100) {
       return;
     }
     lastAddedMapRef.current[product.id] = now;
@@ -322,13 +340,13 @@ export const POSView: React.FC<POSViewProps> = ({
   const lastScanProcessedTimeRef = useRef<number>(0);
 
   const handleBarcodeScanned = (scannedBarcode: string) => {
-    setIsScannerOpen(false);
+    // Keep scanner open for continuous scanning!
     const clean = scannedBarcode.trim();
     if (!clean) return;
 
     const now = Date.now();
-    if (now - lastScanProcessedTimeRef.current < 1800) {
-      return; // 1.8-second debounce guard against rapid bursts
+    if (now - lastScanProcessedTimeRef.current < 850) {
+      return; // Fast debounce guard against rapid bursts
     }
     lastScanProcessedTimeRef.current = now;
 
@@ -341,8 +359,23 @@ export const POSView: React.FC<POSViewProps> = ({
     if (matched) {
       // suppressBeep=true because scanner already sounded the beep
       addToCart(matched, false, true);
+      setScanFeedback({
+        productName: matched.name,
+        price: matched.sellingPrice,
+        barcode: matched.barcode,
+        success: true,
+        timestamp: Date.now(),
+      });
+      showToast(`✓ Naidagdag: ${matched.name} (₱${matched.sellingPrice.toFixed(2)})`);
     } else {
       playWarningSound();
+      setScanFeedback({
+        productName: `Hindi nahanap sa Imbentaryo`,
+        price: 0,
+        barcode: clean,
+        success: false,
+        timestamp: Date.now(),
+      });
       showToast(`⚠️ Hindi nahanap ang barcode "${clean}". Pakitiyak na nakalista ito sa Imbentaryo.`);
     }
   };
@@ -521,13 +554,21 @@ export const POSView: React.FC<POSViewProps> = ({
       </div>
 
       {/* Catalog Grid Header Note */}
-      <div className="flex items-center justify-between text-xs text-slate-400 px-1">
+      <div className="flex flex-wrap items-center justify-between gap-1 text-xs text-slate-400 px-1">
         <span>
-          Ipinapakita: <strong className="text-white">{filteredProducts.length}</strong> paninda sa{' '}
+          Ipinapakita: <strong className="text-white">
+            {filteredProducts.length === 0 ? 0 : (activeCatalogPage - 1) * ITEMS_PER_PAGE + 1}-
+            {Math.min(activeCatalogPage * ITEMS_PER_PAGE, filteredProducts.length)}
+          </strong> ng <strong className="text-white">{filteredProducts.length}</strong> paninda sa{' '}
           <strong className="text-emerald-400">{selectedCategory}</strong>
+          {totalCatalogPages > 1 && (
+            <span className="text-slate-500 ml-1.5 font-mono text-[11px]">
+              (Pahina {activeCatalogPage} ng {totalCatalogPages})
+            </span>
+          )}
         </span>
         <span className="text-[11px] text-slate-500 hidden sm:inline">
-          Pindutin ang larawan o kahon para idagdag sa bayarin
+          20 paninda bawat pahina · Pindutin ang kahon para idagdag sa bayarin
         </span>
       </div>
 
@@ -551,7 +592,7 @@ export const POSView: React.FC<POSViewProps> = ({
             )}
           </div>
         ) : (
-          filteredProducts.map((p) => {
+          paginatedProducts.map((p) => {
             const isOut = p.stock <= 0;
             const isLow = p.stock > 0 && p.stock <= p.minStock;
             const inCartItem = cart.find((i) => i.product.id === p.id);
@@ -675,6 +716,79 @@ export const POSView: React.FC<POSViewProps> = ({
           })
         )}
       </div>
+
+      {/* Pagination Controls */}
+      {totalCatalogPages > 1 && (
+        <div className="flex flex-wrap items-center justify-between gap-3 pt-3 pb-2 border-t border-slate-800/80 px-1 mb-20 sm:mb-24">
+          <div className="text-xs text-slate-400">
+            Pahina <strong className="text-white font-mono">{activeCatalogPage}</strong> ng{' '}
+            <strong className="text-white font-mono">{totalCatalogPages}</strong> ({filteredProducts.length} paninda)
+          </div>
+
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => {
+                setCatalogPage((prev) => Math.max(1, prev - 1));
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+              }}
+              disabled={activeCatalogPage <= 1}
+              className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 disabled:opacity-40 disabled:hover:bg-slate-900 text-slate-300 font-medium rounded-xl text-xs flex items-center gap-1 transition-colors border border-slate-800 cursor-pointer disabled:cursor-not-allowed"
+            >
+              <ArrowLeft className="w-3.5 h-3.5" />
+              <span>Nakaraan</span>
+            </button>
+
+            {/* Page numbers */}
+            <div className="flex items-center gap-1">
+              {Array.from({ length: totalCatalogPages }, (_, i) => i + 1)
+                .filter((p) => {
+                  return (
+                    p === 1 ||
+                    p === totalCatalogPages ||
+                    Math.abs(p - activeCatalogPage) <= 1
+                  );
+                })
+                .map((p, idx, arr) => {
+                  const prev = arr[idx - 1];
+                  const showEllipsis = prev && p - prev > 1;
+                  return (
+                    <React.Fragment key={p}>
+                      {showEllipsis && <span className="px-1 text-slate-600 text-xs font-mono">...</span>}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCatalogPage(p);
+                          window.scrollTo({ top: 0, behavior: 'smooth' });
+                        }}
+                        className={`w-7 h-7 rounded-lg text-xs font-mono font-bold transition-all cursor-pointer ${
+                          activeCatalogPage === p
+                            ? 'bg-emerald-600 text-white shadow-sm'
+                            : 'bg-slate-900 text-slate-400 hover:bg-slate-800 hover:text-white border border-slate-800'
+                        }`}
+                      >
+                        {p}
+                      </button>
+                    </React.Fragment>
+                  );
+                })}
+            </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                setCatalogPage((prev) => Math.min(totalCatalogPages, prev + 1));
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+              }}
+              disabled={activeCatalogPage >= totalCatalogPages}
+              className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 disabled:opacity-40 disabled:hover:bg-slate-900 text-slate-300 font-medium rounded-xl text-xs flex items-center gap-1 transition-colors border border-slate-800 cursor-pointer disabled:cursor-not-allowed"
+            >
+              <span>Susunod</span>
+              <ArrowRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Floating Sticky Bottom Bar for Mobile & Desktop (Always visible when in catalog mode) */}
       <div className="fixed bottom-3 left-3 right-3 sm:left-6 sm:right-6 max-w-3xl mx-auto z-40">
@@ -1680,13 +1794,22 @@ export const POSView: React.FC<POSViewProps> = ({
         </div>
       )}
 
-      {/* Barcode Scanner Modal */}
+      {/* Barcode Scanner Modal with Continuous Scan Mode */}
       <BarcodeScannerModal
         isOpen={isScannerOpen}
-        onClose={() => setIsScannerOpen(false)}
+        onClose={() => {
+          setIsScannerOpen(false);
+          setScanFeedback(null);
+        }}
         onScan={handleBarcodeScanned}
-        title="I-scan ang Barcode para sa Bayarin"
-        subtitle="Kusang idadagdag sa bayarin ang scanned product"
+        title="Tuluy-tuloy na Pag-scan sa Kaha"
+        subtitle="Hindi magsasara ang camera pagka-scan. Diretso lang i-scan ang mga paninda."
+        continuous={true}
+        scanFeedback={scanFeedback}
+        cartSummary={{
+          totalItems: totalItemsCount,
+          totalAmount: grandTotal,
+        }}
       />
     </div>
   );

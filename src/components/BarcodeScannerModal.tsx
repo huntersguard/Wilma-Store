@@ -15,8 +15,18 @@ import {
   Target,
   Crosshair,
   Smartphone,
+  ShoppingCart,
+  Check,
 } from 'lucide-react';
 import { playScanBeep } from '../utils/audio';
+
+export interface BarcodeScanFeedback {
+  productName: string;
+  price: number;
+  barcode: string;
+  success: boolean;
+  timestamp: number;
+}
 
 interface BarcodeScannerModalProps {
   isOpen: boolean;
@@ -24,6 +34,12 @@ interface BarcodeScannerModalProps {
   onScan: (barcode: string) => void;
   title?: string;
   subtitle?: string;
+  continuous?: boolean;
+  scanFeedback?: BarcodeScanFeedback | null;
+  cartSummary?: {
+    totalItems: number;
+    totalAmount: number;
+  };
 }
 
 // Define BarcodeDetector types for TypeScript
@@ -65,6 +81,9 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
   onScan,
   title = 'Scan Barcode',
   subtitle = 'Itutok ang camera sa barcode. May high-precision scanner at zoom para sa maliliit na barcode.',
+  continuous = false,
+  scanFeedback = null,
+  cartSummary,
 }) => {
   const [activeTab, setActiveTab] = useState<'camera' | 'manual'>('camera');
   const [manualCode, setManualCode] = useState('');
@@ -90,12 +109,16 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
   const isScannerActiveRef = useRef<boolean>(false);
   const hasEmittedScanRef = useRef<boolean>(false);
   const scanSessionIdRef = useRef<number>(0);
+  const continuousCooldownRef = useRef<number>(0);
+  const continuousLastCodeRef = useRef<string>('');
 
   useEffect(() => {
     if (!isOpen) {
       hasEmittedScanRef.current = true;
       isScannerActiveRef.current = false;
       scanSessionIdRef.current = 0;
+      continuousCooldownRef.current = 0;
+      continuousLastCodeRef.current = '';
       stopCamera();
       setLastScannedCode(null);
       setHasCameraError(null);
@@ -106,6 +129,8 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
     hasEmittedScanRef.current = false;
     isScannerActiveRef.current = true;
     scanSessionIdRef.current = Date.now();
+    continuousCooldownRef.current = 0;
+    continuousLastCodeRef.current = '';
 
     if (activeTab === 'camera') {
       startCamera();
@@ -122,20 +147,43 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
   }, [isOpen, activeTab]);
 
   /**
-   * Safe Single-Fire Barcode Handler:
-   * Freezes scanning, cancels all loops, stops camera, triggers audio ONCE, and closes modal.
+   * Barcode Handler:
+   * - In Continuous Mode: Emits onScan, beeps, sets feedback, but keeps the camera & modal running!
+   * - In Single-Fire Mode: Cancels loops, stops camera, triggers beep, and closes modal.
    */
   const handleBarcodeDetected = (decodedText: string) => {
     const cleanText = decodedText.trim();
     if (!cleanText) return;
 
-    // Strict guard: ensure minimum 2000ms delay between scans across the application
     const now = Date.now();
+
+    if (continuous) {
+      // In continuous mode:
+      // Prevent duplicate burst of SAME code within 1600ms, and ANY scan within 850ms
+      if (
+        now - continuousCooldownRef.current < 850 ||
+        (continuousLastCodeRef.current === cleanText && now - continuousCooldownRef.current < 1600)
+      ) {
+        return;
+      }
+
+      if (!isScannerActiveRef.current) return;
+
+      continuousCooldownRef.current = now;
+      continuousLastCodeRef.current = cleanText;
+
+      setLastScannedCode(cleanText);
+      playScanBeep();
+      onScan(cleanText);
+      // Stay open and keep camera active for next scan!
+      return;
+    }
+
+    // Single-fire mode:
     if (now - globalLastScannedTimestamp < 2000) {
       return;
     }
 
-    // Strict guard: ensure we only ever fire ONCE per open session
     if (hasEmittedScanRef.current || !isScannerActiveRef.current) {
       return;
     }
@@ -277,9 +325,10 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
           if (barcodes && barcodes.length > 0) {
             const result = barcodes[0].rawValue;
             if (result && result.trim()) {
-              // Valid barcode found! Fire single handler and STOP immediately!
               handleBarcodeDetected(result.trim());
-              return; // Do NOT schedule next frame!
+              if (!continuous) {
+                return; // Do NOT schedule next frame if single-fire!
+              }
             }
           }
         } catch {
@@ -291,7 +340,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
       if (
         scanSessionIdRef.current === sessionId &&
         isScannerActiveRef.current &&
-        !hasEmittedScanRef.current
+        (continuous || !hasEmittedScanRef.current)
       ) {
         animationFrameRef.current = requestAnimationFrame(scanLoop);
       }
@@ -306,7 +355,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
   const startHtml5QrcodeEngine = async (sessionId: number) => {
     await new Promise((r) => setTimeout(r, 120));
 
-    if (scanSessionIdRef.current !== sessionId || !isScannerActiveRef.current || hasEmittedScanRef.current) {
+    if (scanSessionIdRef.current !== sessionId || !isScannerActiveRef.current || (!continuous && hasEmittedScanRef.current)) {
       return;
     }
 
@@ -348,11 +397,11 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
       { facingMode: 'environment' },
       config,
       (decodedText) => {
-        // Strict guard against multiple triggers
+        // Strict guard against multiple triggers in single-fire mode
         if (
           scanSessionIdRef.current !== sessionId ||
           !isScannerActiveRef.current ||
-          hasEmittedScanRef.current
+          (!continuous && hasEmittedScanRef.current)
         ) {
           return;
         }
@@ -709,15 +758,20 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
 
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800 bg-slate-900/90">
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0">
               <Camera className="w-4 h-4" />
             </div>
-            <div>
-              <div className="flex items-center gap-1.5">
-                <h2 className="text-sm font-semibold text-white tracking-tight">{title}</h2>
+            <div className="min-w-0">
+              <div className="flex items-center flex-wrap gap-1.5">
+                <h2 className="text-sm font-semibold text-white tracking-tight truncate">{title}</h2>
+                {continuous && (
+                  <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 flex items-center gap-1 shadow-sm">
+                    ⚡ Tuluy-tuloy na Scan
+                  </span>
+                )}
                 {isNativeHardwareEngine && (
-                  <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center gap-0.5">
+                  <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 hidden sm:flex items-center gap-0.5">
                     <Sparkles className="w-2.5 h-2.5" /> Hardware Vision AI
                   </span>
                 )}
@@ -725,16 +779,26 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
               <p className="text-xs text-slate-400 line-clamp-1">{subtitle}</p>
             </div>
           </div>
-          <button
-            onClick={() => {
-              stopCamera();
-              onClose();
-            }}
-            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
-            title="Isara ang Scanner"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          <div className="flex items-center gap-2 shrink-0">
+            {continuous && cartSummary && (
+              <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 bg-emerald-950/60 border border-emerald-500/30 rounded-lg text-xs font-mono">
+                <ShoppingCart className="w-3.5 h-3.5 text-emerald-400" />
+                <span className="text-emerald-300 font-bold">{cartSummary.totalItems}</span>
+                <span className="text-slate-500">|</span>
+                <span className="text-white font-bold">₱{cartSummary.totalAmount.toFixed(2)}</span>
+              </div>
+            )}
+            <button
+              onClick={() => {
+                stopCamera();
+                onClose();
+              }}
+              className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+              title="Isara ang Scanner"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
 
         {/* Tab switch */}
@@ -744,7 +808,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
             onClick={() => setActiveTab('camera')}
             className={`flex-1 py-1.5 px-3 text-xs font-medium rounded-lg transition-all flex items-center justify-center gap-2 ${
               activeTab === 'camera'
-                ? 'bg-emerald-600 text-white shadow-sm'
+                ? 'bg-emerald-600 text-white shadow-sm font-semibold'
                 : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
             }`}
           >
@@ -756,7 +820,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
             onClick={() => setActiveTab('manual')}
             className={`flex-1 py-1.5 px-3 text-xs font-medium rounded-lg transition-all flex items-center justify-center gap-2 ${
               activeTab === 'manual'
-                ? 'bg-emerald-600 text-white shadow-sm'
+                ? 'bg-emerald-600 text-white shadow-sm font-semibold'
                 : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
             }`}
           >
@@ -767,6 +831,42 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
 
         {/* Content Area */}
         <div className="p-4 flex-1 overflow-y-auto space-y-3">
+          {/* Live Scan Notification Banner for Continuous Mode */}
+          {scanFeedback && (
+            scanFeedback.success ? (
+              <div className="p-3 bg-emerald-950/90 border-2 border-emerald-500/80 rounded-xl flex items-center justify-between gap-3 shadow-lg shadow-emerald-950/50 animate-in fade-in slide-in-from-top-2">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="w-8 h-8 rounded-full bg-emerald-500 text-slate-950 flex items-center justify-center shrink-0 font-extrabold text-sm">
+                    ✓
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-xs font-bold text-white truncate">
+                      Naidagdag sa Bayarin: {scanFeedback.productName}
+                    </div>
+                    <div className="text-[11px] text-emerald-400 font-mono font-semibold flex items-center gap-1.5">
+                      <span>₱{scanFeedback.price.toFixed(2)}</span>
+                      <span className="text-slate-600">·</span>
+                      <span className="text-slate-300 font-sans">{scanFeedback.barcode}</span>
+                    </div>
+                  </div>
+                </div>
+                <span className="text-[10px] uppercase tracking-wide font-extrabold px-2 py-1 rounded bg-emerald-500 text-slate-950 shrink-0 shadow-sm">
+                  +1 Naidagdag
+                </span>
+              </div>
+            ) : (
+              <div className="p-3 bg-rose-950/90 border-2 border-rose-500/80 rounded-xl flex items-center gap-2.5 shadow-lg shadow-rose-950/50 animate-in fade-in slide-in-from-top-2 text-rose-200">
+                <AlertCircle className="w-6 h-6 text-rose-400 shrink-0" />
+                <div className="text-xs min-w-0">
+                  <div className="font-bold text-white">Hindi Nahanap sa Imbentaryo</div>
+                  <div className="text-[11px] text-rose-300">
+                    Barcode: <span className="font-mono">{scanFeedback.barcode}</span>. Pakilista muna sa Imbentaryo o gamitin ang "Walang Barcode".
+                  </div>
+                </div>
+              </div>
+            )
+          )}
+
           {activeTab === 'camera' ? (
             <div className="space-y-3">
               {/* Camera Viewport container */}
@@ -1022,11 +1122,36 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
                 disabled={!manualCode.trim()}
                 className="w-full py-2.5 px-4 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium rounded-xl text-xs transition-colors flex items-center justify-center gap-2 shadow-sm"
               >
-                <Search className="w-4 h-4" /> Hanapin ang Barcode
+                <Search className="w-4 h-4" /> {continuous ? 'Idagdag ang Barcode sa Bayarin' : 'Hanapin ang Barcode'}
               </button>
             </form>
           )}
         </div>
+
+        {/* Continuous Scanning Mode Bottom Bar */}
+        {continuous && (
+          <div className="p-3 sm:p-4 border-t border-slate-800 bg-slate-900/95 flex flex-col sm:flex-row items-center justify-between gap-3 shrink-0">
+            {cartSummary && (
+              <div className="flex items-center gap-2 w-full sm:w-auto justify-between sm:justify-start">
+                <span className="text-xs text-slate-400">Kasalukuyang Bayarin:</span>
+                <span className="text-xs font-extrabold text-emerald-400 font-mono bg-emerald-950/70 border border-emerald-500/30 px-2.5 py-1 rounded-lg">
+                  {cartSummary.totalItems} paninda · ₱{cartSummary.totalAmount.toFixed(2)}
+                </span>
+              </div>
+            )}
+            <button
+              type="button"
+              onClick={() => {
+                stopCamera();
+                onClose();
+              }}
+              className="w-full sm:w-auto flex-1 max-w-md py-3 px-5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 active:scale-98 text-white font-extrabold rounded-xl text-xs sm:text-sm flex items-center justify-center gap-2 shadow-lg shadow-emerald-950/60 transition-all border border-emerald-400/40 cursor-pointer"
+            >
+              <Check className="w-4 h-4 stroke-[2.5]" />
+              <span>Tapos na Mag-scan — Bumalik sa Kaha ({cartSummary?.totalItems || 0} paninda)</span>
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

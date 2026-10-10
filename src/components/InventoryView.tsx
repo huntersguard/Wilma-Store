@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Product } from '../types';
 import { DEFAULT_CATEGORIES } from '../utils/sampleData';
 import { BarcodeScannerModal } from './BarcodeScannerModal';
@@ -23,6 +23,8 @@ import {
   Package,
   Image as ImageIcon,
   Layers,
+  ArrowLeft,
+  ArrowRight,
 } from 'lucide-react';
 import { playScanBeep } from '../utils/audio';
 
@@ -103,6 +105,23 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
 
     return matchesSearch && matchesCategory && matchesStock;
   });
+
+  // Pagination for inventory list: 20 products per page
+  const ITEMS_PER_PAGE = 20;
+  const [currentPage, setCurrentPage] = useState<number>(1);
+
+  // Reset to page 1 when search, category, or stock filter changes
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [search, selectedCategory, stockFilter]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredProducts.length / ITEMS_PER_PAGE));
+  const activePage = Math.min(currentPage, totalPages);
+
+  const paginatedProducts = useMemo(() => {
+    const start = (activePage - 1) * ITEMS_PER_PAGE;
+    return filteredProducts.slice(start, start + ITEMS_PER_PAGE);
+  }, [filteredProducts, activePage]);
 
   const handleOpenAdd = () => {
     setFormData({
@@ -478,7 +497,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
           <>
             {/* Mobile Card View (md:hidden) */}
             <div className="md:hidden divide-y divide-slate-800/70">
-              {filteredProducts.map((p) => {
+              {paginatedProducts.map((p) => {
                 const margin = p.sellingPrice - p.costPrice;
                 const marginPercent = p.costPrice > 0 ? (margin / p.costPrice) * 100 : 0;
                 const isOut = p.stock <= 0;
@@ -616,7 +635,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/60">
-                  {filteredProducts.map((p) => {
+                  {paginatedProducts.map((p) => {
                     const margin = p.sellingPrice - p.costPrice;
                     const marginPercent = p.costPrice > 0 ? (margin / p.costPrice) * 100 : 0;
                     const isOut = p.stock <= 0;
@@ -756,6 +775,80 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                 </tbody>
               </table>
             </div>
+
+            {/* Inventory Pagination Controls */}
+            {totalPages > 1 && (
+              <div className="flex flex-wrap items-center justify-between gap-3 p-3.5 sm:p-4 bg-slate-900/90 border-t border-slate-800">
+                <div className="text-xs text-slate-400">
+                  Ipinapakita ang <strong className="text-white font-mono">{(activePage - 1) * ITEMS_PER_PAGE + 1}</strong> hanggang{' '}
+                  <strong className="text-white font-mono">{Math.min(activePage * ITEMS_PER_PAGE, filteredProducts.length)}</strong> ng{' '}
+                  <strong className="text-white font-mono">{filteredProducts.length}</strong> paninda (Pahina {activePage} ng {totalPages})
+                </div>
+
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCurrentPage((prev) => Math.max(1, prev - 1));
+                      window.scrollTo({ top: 0, behavior: 'smooth' });
+                    }}
+                    disabled={activePage <= 1}
+                    className="px-3 py-1.5 bg-slate-850 hover:bg-slate-800 disabled:opacity-40 disabled:hover:bg-slate-850 text-slate-300 font-medium rounded-xl text-xs flex items-center gap-1 transition-colors border border-slate-800 cursor-pointer disabled:cursor-not-allowed"
+                  >
+                    <ArrowLeft className="w-3.5 h-3.5" />
+                    <span>Nakaraan</span>
+                  </button>
+
+                  {/* Page numbers */}
+                  <div className="flex items-center gap-1">
+                    {Array.from({ length: totalPages }, (_, i) => i + 1)
+                      .filter((p) => {
+                        return (
+                          p === 1 ||
+                          p === totalPages ||
+                          Math.abs(p - activePage) <= 1
+                        );
+                      })
+                      .map((p, idx, arr) => {
+                        const prev = arr[idx - 1];
+                        const showEllipsis = prev && p - prev > 1;
+                        return (
+                          <React.Fragment key={p}>
+                            {showEllipsis && <span className="px-1 text-slate-600 text-xs font-mono">...</span>}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setCurrentPage(p);
+                                window.scrollTo({ top: 0, behavior: 'smooth' });
+                              }}
+                              className={`w-7 h-7 rounded-lg text-xs font-mono font-bold transition-all cursor-pointer ${
+                                activePage === p
+                                  ? 'bg-emerald-600 text-white shadow-sm'
+                                  : 'bg-slate-850 text-slate-400 hover:bg-slate-800 hover:text-white border border-slate-800'
+                              }`}
+                            >
+                              {p}
+                            </button>
+                          </React.Fragment>
+                        );
+                      })}
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCurrentPage((prev) => Math.min(totalPages, prev + 1));
+                      window.scrollTo({ top: 0, behavior: 'smooth' });
+                    }}
+                    disabled={activePage >= totalPages}
+                    className="px-3 py-1.5 bg-slate-850 hover:bg-slate-800 disabled:opacity-40 disabled:hover:bg-slate-850 text-slate-300 font-medium rounded-xl text-xs flex items-center gap-1 transition-colors border border-slate-800 cursor-pointer disabled:cursor-not-allowed"
+                  >
+                    <span>Susunod</span>
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+            )}
           </>
         )}
       </div>

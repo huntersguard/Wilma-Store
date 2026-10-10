@@ -19,6 +19,7 @@ import {
   Smartphone,
   ExternalLink,
   ArrowLeft,
+  ArrowRight,
   Share2,
   Package,
   Receipt,
@@ -101,6 +102,22 @@ export const CustomerStorefrontView: React.FC<CustomerStorefrontProps> = ({
       return matchesSearch && matchesCategory;
     });
   }, [products, search, selectedCategory]);
+
+  // Pagination: 20 products per page
+  const ITEMS_PER_PAGE = 20;
+  const [storePage, setStorePage] = useState<number>(1);
+
+  useEffect(() => {
+    setStorePage(1);
+  }, [search, selectedCategory]);
+
+  const totalStorePages = Math.max(1, Math.ceil(availableProducts.length / ITEMS_PER_PAGE));
+  const activeStorePage = Math.min(storePage, totalStorePages);
+
+  const paginatedAvailableProducts = useMemo(() => {
+    const start = (activeStorePage - 1) * ITEMS_PER_PAGE;
+    return availableProducts.slice(start, start + ITEMS_PER_PAGE);
+  }, [availableProducts, activeStorePage]);
 
   // Cart calculations
   const totalCartCount = cart.reduce((sum, item) => sum + item.quantity, 0);
@@ -371,12 +388,20 @@ export const CustomerStorefrontView: React.FC<CustomerStorefrontProps> = ({
         </div>
 
         {/* Product Count Header */}
-        <div className="flex items-center justify-between text-xs text-slate-400 px-1">
+        <div className="flex flex-wrap items-center justify-between gap-1 text-xs text-slate-400 px-1">
           <span>
-            Paninda: <strong className="text-white">{availableProducts.length}</strong> items sa{' '}
+            Paninda: <strong className="text-white">
+              {availableProducts.length === 0 ? 0 : (activeStorePage - 1) * ITEMS_PER_PAGE + 1}-
+              {Math.min(activeStorePage * ITEMS_PER_PAGE, availableProducts.length)}
+            </strong> ng <strong className="text-white">{availableProducts.length}</strong> items sa{' '}
             <strong className="text-emerald-400">{selectedCategory}</strong>
+            {totalStorePages > 1 && (
+              <span className="text-slate-500 ml-1.5 font-mono text-[11px]">
+                (Pahina {activeStorePage} ng {totalStorePages})
+              </span>
+            )}
           </span>
-          <span className="text-[11px] text-slate-500">Live updated mula sa imbentaryo</span>
+          <span className="text-[11px] text-slate-500 hidden sm:inline">20 paninda bawat pahina</span>
         </div>
 
         {/* Products Grid */}
@@ -390,7 +415,7 @@ export const CustomerStorefrontView: React.FC<CustomerStorefrontProps> = ({
               </p>
             </div>
           ) : (
-            availableProducts.map((p) => {
+            paginatedAvailableProducts.map((p) => {
               const cartItem = cart.find((item) => item.product.id === p.id);
               const inCartQty = cartItem ? cartItem.quantity : 0;
               const isOut = p.stock <= 0;
@@ -496,6 +521,79 @@ export const CustomerStorefrontView: React.FC<CustomerStorefrontProps> = ({
             })
           )}
         </div>
+
+        {/* Online Store Pagination Controls */}
+        {totalStorePages > 1 && (
+          <div className="flex flex-wrap items-center justify-between gap-3 pt-4 pb-2 border-t border-slate-800/80 px-1 mt-6">
+            <div className="text-xs text-slate-400">
+              Pahina <strong className="text-white font-mono">{activeStorePage}</strong> ng{' '}
+              <strong className="text-white font-mono">{totalStorePages}</strong> ({availableProducts.length} paninda)
+            </div>
+
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => {
+                  setStorePage((prev) => Math.max(1, prev - 1));
+                  window.scrollTo({ top: 0, behavior: 'smooth' });
+                }}
+                disabled={activeStorePage <= 1}
+                className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 disabled:opacity-40 disabled:hover:bg-slate-900 text-slate-300 font-medium rounded-xl text-xs flex items-center gap-1 transition-colors border border-slate-800 cursor-pointer disabled:cursor-not-allowed"
+              >
+                <ArrowLeft className="w-3.5 h-3.5" />
+                <span>Nakaraan</span>
+              </button>
+
+              {/* Page numbers */}
+              <div className="flex items-center gap-1">
+                {Array.from({ length: totalStorePages }, (_, i) => i + 1)
+                  .filter((p) => {
+                    return (
+                      p === 1 ||
+                      p === totalStorePages ||
+                      Math.abs(p - activeStorePage) <= 1
+                    );
+                  })
+                  .map((p, idx, arr) => {
+                    const prev = arr[idx - 1];
+                    const showEllipsis = prev && p - prev > 1;
+                    return (
+                      <React.Fragment key={p}>
+                        {showEllipsis && <span className="px-1 text-slate-600 text-xs font-mono">...</span>}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setStorePage(p);
+                            window.scrollTo({ top: 0, behavior: 'smooth' });
+                          }}
+                          className={`w-7 h-7 rounded-lg text-xs font-mono font-bold transition-all cursor-pointer ${
+                            activeStorePage === p
+                              ? 'bg-emerald-600 text-white shadow-sm'
+                              : 'bg-slate-900 text-slate-400 hover:bg-slate-800 hover:text-white border border-slate-800'
+                          }`}
+                        >
+                          {p}
+                        </button>
+                      </React.Fragment>
+                    );
+                  })}
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setStorePage((prev) => Math.min(totalStorePages, prev + 1));
+                  window.scrollTo({ top: 0, behavior: 'smooth' });
+                }}
+                disabled={activeStorePage >= totalStorePages}
+                className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 disabled:opacity-40 disabled:hover:bg-slate-900 text-slate-300 font-medium rounded-xl text-xs flex items-center gap-1 transition-colors border border-slate-800 cursor-pointer disabled:cursor-not-allowed"
+              >
+                <span>Susunod</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+        )}
       </main>
 
       {/* Floating Sticky Bottom Cart Summary */}
