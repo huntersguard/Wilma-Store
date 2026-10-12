@@ -88,6 +88,7 @@ export default function App() {
   const [isCloudSynced, setIsCloudSynced] = useState<boolean>(false);
   const [isSyncingCloud, setIsSyncingCloud] = useState<boolean>(false);
   const [cloudSyncToast, setCloudSyncToast] = useState<string | null>(null);
+  const [isInitialLoading, setIsInitialLoading] = useState<boolean>(true);
 
   // Dedicated Customer Portal mode (via ?mode=store or ?store=1 or #store)
   const [isCustomerMode, setIsCustomerMode] = useState<boolean>(() => {
@@ -309,6 +310,10 @@ export default function App() {
         });
       } catch (err) {
         console.warn('Firebase init error, using local storage fallback:', err);
+      } finally {
+        setTimeout(() => {
+          setIsInitialLoading(false);
+        }, 600);
       }
     };
 
@@ -655,6 +660,7 @@ export default function App() {
         settings={settings}
         categories={activeCategories}
         isCustomerViewOnly={true}
+        isLoading={isInitialLoading}
         onBackToAdmin={() => {
           if (typeof window !== 'undefined') {
             const url = new URL(window.location.href);
@@ -1176,6 +1182,7 @@ export default function App() {
             settings={settings}
             categories={activeCategories}
             isCustomerViewOnly={false}
+            isLoading={isInitialLoading}
             onBackToAdmin={() => setActiveTab('pos')}
           />
         )}

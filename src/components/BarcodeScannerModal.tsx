@@ -17,6 +17,8 @@ import {
   Smartphone,
   ShoppingCart,
   Check,
+  Shield,
+  Plus,
 } from 'lucide-react';
 import { playScanBeep } from '../utils/audio';
 
@@ -36,6 +38,7 @@ interface BarcodeScannerModalProps {
   subtitle?: string;
   continuous?: boolean;
   scanFeedback?: BarcodeScanFeedback | null;
+  onAddUnfoundBarcode?: (barcode: string) => void;
   cartSummary?: {
     totalItems: number;
     totalAmount: number;
@@ -83,8 +86,10 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
   subtitle = 'Itutok ang camera sa barcode. May high-precision scanner at zoom para sa maliliit na barcode.',
   continuous = false,
   scanFeedback = null,
+  onAddUnfoundBarcode,
   cartSummary,
 }) => {
+  const isIOSDevice = typeof navigator !== 'undefined' && /iPhone|iPad|iPod/i.test(navigator.userAgent);
   const [activeTab, setActiveTab] = useState<'camera' | 'manual'>('camera');
   const [manualCode, setManualCode] = useState('');
   const [isScanning, setIsScanning] = useState(false);
@@ -97,6 +102,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
   const [isNativeHardwareEngine, setIsNativeHardwareEngine] = useState(false);
   const [isProcessingPhoto, setIsProcessingPhoto] = useState(false);
   const [snapshotFeedback, setSnapshotFeedback] = useState<string | null>(null);
+  const [antiShakeMode, setAntiShakeMode] = useState<boolean>(() => isIOSDevice);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -104,6 +110,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
   const animationFrameRef = useRef<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const scannerContainerId = 'interactive-barcode-viewport';
+  const lastBgDejitterTimeRef = useRef<number>(0);
 
   // Strict Lifecycle & Anti-Loop Refs
   const isScannerActiveRef = useRef<boolean>(false);
@@ -264,9 +271,10 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
     const constraints: MediaStreamConstraints = {
       video: {
         facingMode: { ideal: 'environment' },
-        width: isIOS ? { ideal: 1280, max: 1920 } : { ideal: 1920, min: 1280 },
-        height: isIOS ? { ideal: 720, max: 1080 } : { ideal: 1080, min: 720 },
-        frameRate: { ideal: 30, max: 30 },
+        // On iPhone XR, locking to 720p @ 24fps stops the OIS actuator motor from overheating and oscillating
+        width: isIOS ? { ideal: 1280, max: 1280 } : { ideal: 1920, min: 1280 },
+        height: isIOS ? { ideal: 720, max: 720 } : { ideal: 1080, min: 720 },
+        frameRate: isIOS ? { ideal: 24, max: 30 } : { ideal: 30, max: 30 },
       },
       audio: false,
     };
@@ -287,12 +295,21 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
 
     await video.play();
 
-    // Inspect capabilities (Zoom & Torch)
+    // Inspect capabilities (Zoom & Torch & Continuous Autofocus)
     const track = stream.getVideoTracks()[0];
     if (track && track.getCapabilities) {
       const caps = track.getCapabilities() as any;
       if ('torch' in caps) setSupportsTorch(true);
       if ('zoom' in caps && caps.zoom) setSupportsZoom(true);
+
+      // Lock autofocus if supported to prevent jitter hunting
+      try {
+        if (typeof (track as any).applyConstraints === 'function') {
+          await (track as any).applyConstraints({
+            advanced: [{ focusMode: 'continuous' }],
+          });
+        }
+      } catch {}
     }
 
     // Supported formats
@@ -311,6 +328,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
 
       if (video && video.readyState >= 2) {
         try {
+          // Pass A: Direct raw video detection
           const barcodes = await detector.detect(video);
 
           // 2. Strict guard after async detect: verify still active
@@ -329,6 +347,39 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
               if (!continuous) {
                 return; // Do NOT schedule next frame if single-fire!
               }
+            }
+          }
+
+          // Pass B: Anti-Shake Background De-Jitter Pass for vibrating / jittery iPhone camera
+          const now = Date.now();
+          if (antiShakeMode && now - lastBgDejitterTimeRef.current > 320) {
+            lastBgDejitterTimeRef.current = now;
+            try {
+              const vw = video.videoWidth || 1280;
+              const vh = video.videoHeight || 720;
+              const cropW = Math.max(120, Math.floor(vw * 0.75));
+              const cropH = Math.max(80, Math.floor(vh * 0.55));
+              const startX = Math.max(0, Math.floor((vw - cropW) / 2));
+              const startY = Math.max(0, Math.floor((vh - cropH) / 2));
+
+              const stillCanvas = document.createElement('canvas');
+              stillCanvas.width = cropW;
+              stillCanvas.height = cropH;
+              const sCtx = stillCanvas.getContext('2d');
+              if (sCtx) {
+                sCtx.drawImage(video, startX, startY, cropW, cropH, 0, 0, cropW, cropH);
+                const sharpCanvas = applySharpeningFilter(stillCanvas);
+                const sharpBarcodes = await detector.detect(sharpCanvas);
+                if (sharpBarcodes && sharpBarcodes.length > 0 && sharpBarcodes[0].rawValue) {
+                  const code = sharpBarcodes[0].rawValue.trim();
+                  if (code) {
+                    handleBarcodeDetected(code);
+                    if (!continuous) return;
+                  }
+                }
+              }
+            } catch {
+              // ignore de-jitter frame errors
             }
           }
         } catch {
@@ -540,6 +591,64 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
   };
 
   /**
+   * Helper: 3x3 Laplacian Unsharp-Mask Sharpening Filter
+   * Reverses micro-motion blur and edge-jitter from trembling iPhone XR camera
+   */
+  const applySharpeningFilter = (sourceCanvas: HTMLCanvasElement): HTMLCanvasElement => {
+    const sharpCanvas = document.createElement('canvas');
+    sharpCanvas.width = sourceCanvas.width;
+    sharpCanvas.height = sourceCanvas.height;
+    const ctx = sharpCanvas.getContext('2d', { willReadFrequently: true });
+    if (!ctx) return sourceCanvas;
+    ctx.drawImage(sourceCanvas, 0, 0);
+
+    try {
+      const imgData = ctx.getImageData(0, 0, sharpCanvas.width, sharpCanvas.height);
+      const src = imgData.data;
+      const output = ctx.createImageData(sharpCanvas.width, sharpCanvas.height);
+      const dst = output.data;
+      const w = sharpCanvas.width;
+      const h = sharpCanvas.height;
+
+      // 3x3 sharpening kernel: [0, -1, 0, -1, 5, -1, 0, -1, 0]
+      for (let y = 1; y < h - 1; y++) {
+        for (let x = 1; x < w - 1; x++) {
+          const idx = (y * w + x) * 4;
+          const top = ((y - 1) * w + x) * 4;
+          const btm = ((y + 1) * w + x) * 4;
+          const lft = (y * w + (x - 1)) * 4;
+          const rgt = (y * w + (x + 1)) * 4;
+
+          for (let c = 0; c < 3; c++) {
+            const val = 5 * src[idx + c] - (src[top + c] + src[btm + c] + src[lft + c] + src[rgt + c]);
+            dst[idx + c] = val < 0 ? 0 : val > 255 ? 255 : val;
+          }
+          dst[idx + 3] = 255;
+        }
+      }
+      ctx.putImageData(output, 0, 0);
+      return sharpCanvas;
+    } catch {
+      return sourceCanvas;
+    }
+  };
+
+  /**
+   * Helper: Rotate canvas 90 degrees in case barcode is tilted or orientation is vertical
+   */
+  const rotateCanvas90 = (sourceCanvas: HTMLCanvasElement): HTMLCanvasElement => {
+    const rotCanvas = document.createElement('canvas');
+    rotCanvas.width = sourceCanvas.height;
+    rotCanvas.height = sourceCanvas.width;
+    const ctx = rotCanvas.getContext('2d');
+    if (!ctx) return sourceCanvas;
+    ctx.translate(rotCanvas.width / 2, rotCanvas.height / 2);
+    ctx.rotate(Math.PI / 2);
+    ctx.drawImage(sourceCanvas, -sourceCanvas.width / 2, -sourceCanvas.height / 2);
+    return rotCanvas;
+  };
+
+  /**
    * Helper: Boost contrast and convert to grayscale to sharpen blurry / shaking barcodes
    */
   const enhanceBarcodeContrast = (sourceCanvas: HTMLCanvasElement): HTMLCanvasElement => {
@@ -572,7 +681,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
   };
 
   /**
-   * Helper: Multi-engine decoder on a single canvas candidate
+   * Helper: Multi-engine decoder on a single canvas candidate with multi-pass filters
    */
   const decodeFromCanvasCandidate = async (candidateCanvas: HTMLCanvasElement): Promise<string | null> => {
     // 1. Try Native BarcodeDetector (hardware accelerated)
@@ -607,14 +716,14 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
   };
 
   /**
-   * 🎯 TARGETED CROSSHAIR CAPTURE (Anti-Shake Snap):
-   * Grabs the high-res frame from the live video, crops directly to the crosshair box,
-   * performs multi-pass contrast sharpening to eliminate motion blur/jitter, and decodes.
+   * 🎯 3-SHOT ANTI-SHAKE BURST SCAN (Special iPhone XR Stabilization):
+   * Captures 3 fast micro-frames spaced 60ms apart to catch the still apex
+   * of the mechanical OIS camera oscillation, applies sharpening filters, and decodes.
    */
-  const handleCaptureSnapshot = async () => {
+  const handleBurstAntiShakeScan = async () => {
     if (hasEmittedScanRef.current) return;
     setIsProcessingPhoto(true);
-    setSnapshotFeedback('Kinukuha at sinusuri ang barcode sa crosshair...');
+    setSnapshotFeedback('Kumukuha ng 3 anti-shake frames at inaalis ang motion blur...');
 
     try {
       let video: HTMLVideoElement | null = null;
@@ -626,50 +735,66 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
 
       if (!video) throw new Error('Video not active');
 
-      const fullCanvas = document.createElement('canvas');
-      fullCanvas.width = video.videoWidth || 1280;
-      fullCanvas.height = video.videoHeight || 720;
-      const ctx = fullCanvas.getContext('2d');
-      if (!ctx) throw new Error('Could not get canvas');
-      ctx.drawImage(video, 0, 0, fullCanvas.width, fullCanvas.height);
+      // 3 Burst attempts across time to catch zero-velocity pause in camera vibration
+      for (let burstIdx = 0; burstIdx < 3; burstIdx++) {
+        if (burstIdx > 0) {
+          await new Promise((r) => setTimeout(r, 65));
+        }
 
-      // Pass 1: Cropped directly to the center Crosshair box using active zoom level
-      const crosshairCanvas = cropCanvasToCrosshair(fullCanvas, 0.85, 0.65, zoomLevel);
-      let decoded = await decodeFromCanvasCandidate(crosshairCanvas);
-      if (decoded) {
-        handleBarcodeDetected(decoded);
-        return;
+        const fullCanvas = document.createElement('canvas');
+        fullCanvas.width = video.videoWidth || 1280;
+        fullCanvas.height = video.videoHeight || 720;
+        const ctx = fullCanvas.getContext('2d');
+        if (!ctx) continue;
+        ctx.drawImage(video, 0, 0, fullCanvas.width, fullCanvas.height);
+
+        // Candidate 1: Center Crosshair Crop
+        const crosshairCanvas = cropCanvasToCrosshair(fullCanvas, 0.85, 0.65, zoomLevel);
+        let decoded = await decodeFromCanvasCandidate(crosshairCanvas);
+        if (decoded) {
+          handleBarcodeDetected(decoded);
+          return;
+        }
+
+        // Candidate 2: Sharpened Crosshair with Laplacian unsharp-mask filter (reverses shake blur)
+        const sharpCrosshair = applySharpeningFilter(crosshairCanvas);
+        decoded = await decodeFromCanvasCandidate(sharpCrosshair);
+        if (decoded) {
+          handleBarcodeDetected(decoded);
+          return;
+        }
+
+        // Candidate 3: High-contrast binarized Crosshair
+        const contrastCrosshair = enhanceBarcodeContrast(crosshairCanvas);
+        decoded = await decodeFromCanvasCandidate(contrastCrosshair);
+        if (decoded) {
+          handleBarcodeDetected(decoded);
+          return;
+        }
+
+        // Candidate 4: Rotated 90 degrees
+        const rotCrosshair = rotateCanvas90(sharpCrosshair);
+        decoded = await decodeFromCanvasCandidate(rotCrosshair);
+        if (decoded) {
+          handleBarcodeDetected(decoded);
+          return;
+        }
+
+        // Candidate 5: Sharpened Full-frame
+        const sharpFull = applySharpeningFilter(fullCanvas);
+        decoded = await decodeFromCanvasCandidate(sharpFull);
+        if (decoded) {
+          handleBarcodeDetected(decoded);
+          return;
+        }
       }
 
-      // Pass 2: Enhanced contrast / binarized Crosshair (sharpens shaky/blurred barcodes)
-      const enhancedCrosshair = enhanceBarcodeContrast(crosshairCanvas);
-      decoded = await decodeFromCanvasCandidate(enhancedCrosshair);
-      if (decoded) {
-        handleBarcodeDetected(decoded);
-        return;
-      }
-
-      // Pass 3: Full-frame canvas
-      decoded = await decodeFromCanvasCandidate(fullCanvas);
-      if (decoded) {
-        handleBarcodeDetected(decoded);
-        return;
-      }
-
-      // Pass 4: Enhanced full-frame
-      const enhancedFull = enhanceBarcodeContrast(fullCanvas);
-      decoded = await decodeFromCanvasCandidate(enhancedFull);
-      if (decoded) {
-        handleBarcodeDetected(decoded);
-        return;
-      }
-
-      // If not recognized in this frame
-      setSnapshotFeedback('Hindi pa nabasa ang barcode. Ipuwesto sa gitna ng berdeng kahon at subukan ulit.');
-      setTimeout(() => setSnapshotFeedback(null), 3500);
+      // If not recognized after 3 bursts
+      setSnapshotFeedback('Hindi pa nabasa. Ipuwesto ang barcode mga 4-5 pulgada o gamitin ang "📷 Phone Camera App" sa ibaba.');
+      setTimeout(() => setSnapshotFeedback(null), 4000);
     } catch (err: any) {
-      console.warn('Snapshot scan error:', err);
-      setSnapshotFeedback('Hindi nabasa. Subukang ilapit nang kaunti (mga 4-6 pulgada).');
+      console.warn('Burst scan error:', err);
+      setSnapshotFeedback('Hindi nabasa ang barcode sa litrato. Maaari mong gamitin ang "📷 Phone Camera App".');
       setTimeout(() => setSnapshotFeedback(null), 3500);
     } finally {
       setIsProcessingPhoto(false);
@@ -747,6 +872,9 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
     setManualCode('');
     handleBarcodeDetected(code);
   };
+
+  // Anti-shake capture snapshot handler for iPhone XR & mobile cameras
+  const handleCaptureSnapshot = handleBurstAntiShakeScan;
 
   if (!isOpen) return null;
 
@@ -855,14 +983,32 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
                 </span>
               </div>
             ) : (
-              <div className="p-3 bg-rose-950/90 border-2 border-rose-500/80 rounded-xl flex items-center gap-2.5 shadow-lg shadow-rose-950/50 animate-in fade-in slide-in-from-top-2 text-rose-200">
-                <AlertCircle className="w-6 h-6 text-rose-400 shrink-0" />
-                <div className="text-xs min-w-0">
-                  <div className="font-bold text-white">Hindi Nahanap sa Imbentaryo</div>
-                  <div className="text-[11px] text-rose-300">
-                    Barcode: <span className="font-mono">{scanFeedback.barcode}</span>. Pakilista muna sa Imbentaryo o gamitin ang "Walang Barcode".
+              <div className="p-3.5 bg-rose-950/95 border-2 border-rose-500/80 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xl shadow-rose-950/60 animate-in fade-in slide-in-from-top-2 text-rose-200">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <AlertCircle className="w-6 h-6 text-rose-400 shrink-0" />
+                  <div className="text-xs min-w-0">
+                    <div className="font-bold text-white text-xs sm:text-sm">
+                      Hindi Nahanap sa Imbentaryo
+                    </div>
+                    <div className="text-[11px] text-rose-300">
+                      Barcode: <span className="font-mono font-bold text-rose-100 bg-rose-900/60 px-1.5 py-0.5 rounded">{scanFeedback.barcode}</span>
+                    </div>
                   </div>
                 </div>
+
+                {/* 1-Tap Option to Add to Inventory directly */}
+                {onAddUnfoundBarcode && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onAddUnfoundBarcode(scanFeedback.barcode);
+                    }}
+                    className="self-stretch sm:self-auto px-3.5 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 active:scale-95 text-white font-bold rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-md shadow-emerald-950/50 transition-all border border-emerald-400/30 cursor-pointer shrink-0"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>+ Idagdag sa Imbentaryo</span>
+                  </button>
+                )}
               </div>
             )
           )}

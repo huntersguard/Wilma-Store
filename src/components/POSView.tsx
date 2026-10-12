@@ -75,9 +75,10 @@ export const POSView: React.FC<POSViewProps> = ({
   const ITEMS_PER_PAGE = 20;
   const [catalogPage, setCatalogPage] = useState<number>(1);
 
-  // Quick Non-Barcoded Grocery / Tingi Item Modal
+  // Quick Non-Barcoded Grocery / Tingi Item Modal & Unfound Barcode Quick-Add
   const [isQuickCustomOpen, setIsQuickCustomOpen] = useState(false);
   const [customName, setCustomName] = useState('');
+  const [customBarcode, setCustomBarcode] = useState('');
   const [customPrice, setCustomPrice] = useState<number | ''>('');
   const [customQty, setCustomQty] = useState<number>(1);
   const [customUnit, setCustomUnit] = useState<string>('pc');
@@ -263,10 +264,22 @@ export const POSView: React.FC<POSViewProps> = ({
 
   const handleOpenQuickCustom = () => {
     setCustomName('');
+    setCustomBarcode('');
     setCustomPrice('');
     setCustomQty(1);
     setCustomUnit('pc');
     setCustomSaveInventory(false);
+    setCustomError(null);
+    setIsQuickCustomOpen(true);
+  };
+
+  const handleOpenUnfoundBarcodeAdd = (unfoundBarcode: string) => {
+    setCustomName('');
+    setCustomBarcode(unfoundBarcode);
+    setCustomPrice('');
+    setCustomQty(1);
+    setCustomUnit('pc');
+    setCustomSaveInventory(true); // Default to true so it gets saved to inventory
     setCustomError(null);
     setIsQuickCustomOpen(true);
   };
@@ -292,10 +305,14 @@ export const POSView: React.FC<POSViewProps> = ({
     }
     const qty = Math.max(1, customQty || 1);
 
+    const finalBarcode = customBarcode.trim()
+      ? customBarcode.trim()
+      : `GROCERY-${Date.now().toString().slice(-5)}`;
+
     const quickProduct: Product = {
       id: `custom-${Date.now()}`,
       name: cleanName,
-      barcode: `GROCERY-${Date.now().toString().slice(-5)}`,
+      barcode: finalBarcode,
       category: 'Tingi & Groceries',
       unit: customUnit || 'pc',
       costPrice: 0, // Puhunan hindi kailangan ayon sa may-ari
@@ -303,7 +320,7 @@ export const POSView: React.FC<POSViewProps> = ({
       stock: 999,
       minStock: 5,
       updatedAt: new Date().toISOString(),
-      notes: 'Walang barcode / Manual added grocery item',
+      notes: customBarcode.trim() ? `Naidagdag mula sa barcode scan: ${customBarcode.trim()}` : 'Walang barcode / Manual added grocery item',
     };
 
     if (customSaveInventory && onAddProduct) {
@@ -1652,6 +1669,22 @@ export const POSView: React.FC<POSViewProps> = ({
                 />
               </div>
 
+              {/* Scanned Barcode Display if coming from scanner */}
+              {customBarcode && (
+                <div className="p-2.5 bg-emerald-950/40 border border-emerald-500/30 rounded-xl flex items-center justify-between text-xs">
+                  <div className="flex items-center gap-2">
+                    <Tag className="w-4 h-4 text-emerald-400 shrink-0" />
+                    <div>
+                      <span className="text-[10px] text-slate-400 block">Nai-scan na Barcode:</span>
+                      <span className="font-mono font-bold text-emerald-300">{customBarcode}</span>
+                    </div>
+                  </div>
+                  <span className="text-[10px] bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded-full border border-emerald-500/40 font-semibold">
+                    Ikakabit sa Paninda
+                  </span>
+                </div>
+              )}
+
               <div className="grid grid-cols-2 gap-3">
                 {/* Selling Price (Presyo ng Benta) */}
                 <div>
@@ -1806,6 +1839,7 @@ export const POSView: React.FC<POSViewProps> = ({
         subtitle="Hindi magsasara ang camera pagka-scan. Diretso lang i-scan ang mga paninda."
         continuous={true}
         scanFeedback={scanFeedback}
+        onAddUnfoundBarcode={handleOpenUnfoundBarcodeAdd}
         cartSummary={{
           totalItems: totalItemsCount,
           totalAmount: grandTotal,
