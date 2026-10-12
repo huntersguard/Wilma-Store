@@ -802,62 +802,101 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
   };
 
   /**
-   * Handle Photo Upload / Native Camera Capture (Uses iOS Hardware OIS & Deep Fusion)
+   * Handle Photo Upload / Native Camera Capture (Uses iOS Hardware OIS, Flash & Deep Fusion)
    */
   const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     setIsProcessingPhoto(true);
-    setSnapshotFeedback('Sinusuri ang litrato mula sa camera...');
+    setSnapshotFeedback('Binabasa ang barcode mula sa Camera ng iPhone...');
     try {
       const img = new Image();
       img.src = URL.createObjectURL(file);
-      await new Promise((resolve) => (img.onload = resolve));
+      await new Promise((resolve, reject) => {
+        img.onload = () => resolve(true);
+        img.onerror = () => reject(new Error('Image failed to load'));
+      });
+
+      const origW = img.naturalWidth || img.width;
+      const origH = img.naturalHeight || img.height;
+
+      // Create high-res canvas (capped to 1920 to keep performance optimal)
+      const scale = Math.min(1, 1920 / Math.max(origW, origH));
+      const targetW = Math.round(origW * scale);
+      const targetH = Math.round(origH * scale);
 
       const fullCanvas = document.createElement('canvas');
-      fullCanvas.width = img.naturalWidth || img.width;
-      fullCanvas.height = img.naturalHeight || img.height;
+      fullCanvas.width = targetW;
+      fullCanvas.height = targetH;
       const ctx = fullCanvas.getContext('2d');
+
       if (ctx) {
-        ctx.drawImage(img, 0, 0);
+        ctx.drawImage(img, 0, 0, targetW, targetH);
 
-        // Pass 1: Center Crop
-        const centerCrop = cropCanvasToCrosshair(fullCanvas, 0.80, 0.60);
-        let decoded = await decodeFromCanvasCandidate(centerCrop);
+        // Candidate 1: Full Image as captured by iPhone camera
+        let decoded = await decodeFromCanvasCandidate(fullCanvas);
         if (decoded) {
           handleBarcodeDetected(decoded);
           return;
         }
 
-        // Pass 2: Enhanced Center
-        const enhancedCenter = enhanceBarcodeContrast(centerCrop);
-        decoded = await decodeFromCanvasCandidate(enhancedCenter);
+        // Candidate 2: High-contrast binarized full image
+        const contrastFull = enhanceBarcodeContrast(fullCanvas);
+        decoded = await decodeFromCanvasCandidate(contrastFull);
         if (decoded) {
           handleBarcodeDetected(decoded);
           return;
         }
 
-        // Pass 3: Full Image
-        decoded = await decodeFromCanvasCandidate(fullCanvas);
+        // Candidate 3: Center 75% crop (where user naturally points the camera)
+        const centerCrop = cropCanvasToCrosshair(fullCanvas, 0.75, 0.55);
+        decoded = await decodeFromCanvasCandidate(centerCrop);
+        if (decoded) {
+          handleBarcodeDetected(decoded);
+          return;
+        }
+
+        // Candidate 4: Enhanced Sharpened Center Crop
+        const sharpCenter = applySharpeningFilter(centerCrop);
+        decoded = await decodeFromCanvasCandidate(sharpCenter);
+        if (decoded) {
+          handleBarcodeDetected(decoded);
+          return;
+        }
+
+        // Candidate 5: High-contrast Center Crop
+        const contrastCenter = enhanceBarcodeContrast(centerCrop);
+        decoded = await decodeFromCanvasCandidate(contrastCenter);
+        if (decoded) {
+          handleBarcodeDetected(decoded);
+          return;
+        }
+
+        // Candidate 6: Rotated 90 degrees in case phone was held horizontally/vertically
+        const rotCanvas = rotateCanvas90(centerCrop);
+        decoded = await decodeFromCanvasCandidate(rotCanvas);
         if (decoded) {
           handleBarcodeDetected(decoded);
           return;
         }
       }
 
-      // Fallback direct scan
-      const scanner = new Html5Qrcode('file-scanner-temp', { verbose: false });
-      const res = await scanner.scanFileV2(file, true);
-      if (res?.decodedText) {
-        handleBarcodeDetected(res.decodedText);
-      } else {
-        setSnapshotFeedback('Hindi nabasa ang barcode sa litrato. Pakisubukan muli o ilapit ang camera.');
-        setTimeout(() => setSnapshotFeedback(null), 3500);
-      }
+      // Fallback direct scan via Html5Qrcode scanFileV2
+      try {
+        const scanner = new Html5Qrcode('file-scanner-temp', { verbose: false });
+        const res = await scanner.scanFileV2(file, true);
+        if (res?.decodedText) {
+          handleBarcodeDetected(res.decodedText);
+          return;
+        }
+      } catch {}
+
+      setSnapshotFeedback('Hindi nabasa ang barcode. Tiyaking maliwanag at nakatutok sa guhit ng barcode bago kumuha ng litrato.');
+      setTimeout(() => setSnapshotFeedback(null), 4000);
     } catch (err) {
       console.error('File scan failed:', err);
-      setSnapshotFeedback('Hindi nabasa ang barcode sa litrato. Maaari mong gamitin ang "I-type ang Barcode".');
+      setSnapshotFeedback('Hindi nabasa ang litrato. Maaari mong gamitin ang "I-type ang Barcode".');
       setTimeout(() => setSnapshotFeedback(null), 3500);
     } finally {
       setIsProcessingPhoto(false);
@@ -1127,41 +1166,46 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
                 </div>
               )}
 
-              {/* SNAP TO SCAN & Upload Photo Actions (Specially built for iPhone camera shake) */}
-              <div className="space-y-2">
-                <button
-                  type="button"
-                  onClick={handleCaptureSnapshot}
-                  disabled={isProcessingPhoto}
-                  className="w-full py-3 px-4 bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 hover:from-emerald-500 hover:to-teal-500 active:scale-98 disabled:opacity-50 text-white font-bold rounded-2xl text-xs sm:text-sm flex items-center justify-center gap-2.5 shadow-md shadow-emerald-950/50 transition-all border border-emerald-400/40"
-                >
-                  <Target className="w-5 h-5 text-emerald-200 animate-pulse" />
-                  <div className="text-left">
-                    <div className="font-bold flex items-center gap-1.5">
-                      <span>🎯 Kumuha sa Loob ng Crosshair (Anti-Shake Snap)</span>
-                      <span className="text-[10px] bg-emerald-950 text-emerald-300 px-1.5 py-0.5 rounded-full border border-emerald-500/40 font-normal">
-                        Rekomendado
-                      </span>
+              {/* CAMERA OPTIONS FOR SHAKING PHONES */}
+              <div className="space-y-2.5">
+                {/* PRIMARY RECOMMENDED BUTTON: Apple Native Phone Camera (Uses Apple Deep Fusion & Hardware OIS) */}
+                <label className="w-full py-3.5 px-4 bg-gradient-to-r from-sky-600 via-indigo-600 to-sky-700 hover:from-sky-500 hover:to-indigo-500 active:scale-98 text-white font-bold rounded-2xl text-xs sm:text-sm flex items-center justify-between gap-3 shadow-lg shadow-sky-950/50 transition-all border border-sky-400/40 cursor-pointer">
+                  <div className="flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-xl bg-white/10 flex items-center justify-center shrink-0">
+                      <Camera className="w-5 h-5 text-white" />
                     </div>
-                    <div className="text-[10.5px] text-emerald-100/90 font-normal">
-                      Pindutin para basahin agad ang barcode sa loob ng kahon kahit maalog ang phone
+                    <div className="text-left">
+                      <div className="font-extrabold flex items-center gap-1.5 text-white text-xs sm:text-sm">
+                        <span>📱 Gamitin ang Camera ng iPhone (Walang Alog)</span>
+                        <span className="text-[10px] bg-sky-950 text-sky-200 px-2 py-0.5 rounded-full border border-sky-400/40 font-semibold">
+                          100% Malinaw
+                        </span>
+                      </div>
+                      <div className="text-[10.5px] text-sky-100/90 font-normal">
+                        Bukas ang mismong camera ng phone na may built-in stabilizer laban sa panginginig
+                      </div>
                     </div>
                   </div>
-                </button>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    onChange={handlePhotoUpload}
+                    className="hidden"
+                  />
+                </label>
 
                 <div className="grid grid-cols-2 gap-2">
-                  <label className="py-2.5 px-3 bg-slate-900 hover:bg-slate-800 active:scale-98 text-slate-200 font-semibold rounded-xl text-xs flex items-center justify-center gap-2 transition-all cursor-pointer border border-slate-800">
-                    <Camera className="w-4 h-4 text-sky-400" />
-                    <span>📷 Phone Camera App</span>
-                    <input
-                      ref={fileInputRef}
-                      type="file"
-                      accept="image/*"
-                      capture="environment"
-                      onChange={handlePhotoUpload}
-                      className="hidden"
-                    />
-                  </label>
+                  <button
+                    type="button"
+                    onClick={handleCaptureSnapshot}
+                    disabled={isProcessingPhoto}
+                    className="py-2.5 px-3 bg-slate-900 hover:bg-slate-800 active:scale-98 text-slate-200 font-semibold rounded-xl text-xs flex items-center justify-center gap-2 transition-all border border-slate-800"
+                  >
+                    <Target className="w-4 h-4 text-emerald-400" />
+                    <span>🎯 Anti-Shake Snap</span>
+                  </button>
 
                   <button
                     type="button"
