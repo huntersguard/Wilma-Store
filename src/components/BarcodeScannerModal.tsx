@@ -19,6 +19,8 @@ import {
   Check,
   Shield,
   Plus,
+  SwitchCamera,
+  FlipHorizontal,
 } from 'lucide-react';
 import { playScanBeep } from '../utils/audio';
 
@@ -94,6 +96,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
   const [manualCode, setManualCode] = useState('');
   const [isScanning, setIsScanning] = useState(false);
   const [hasCameraError, setHasCameraError] = useState<string | null>(null);
+  const [cameraFacingMode, setCameraFacingMode] = useState<'environment' | 'user'>('environment');
   const [torchEnabled, setTorchEnabled] = useState(false);
   const [supportsTorch, setSupportsTorch] = useState(false);
   const [zoomLevel, setZoomLevel] = useState<number>(1);
@@ -217,7 +220,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
    * 1. Primary: Native hardware BarcodeDetector (iOS Safari 17+, Chrome Android)
    * 2. Fallback: Html5Qrcode with full-frame multi-pass scanner
    */
-  const startCamera = async () => {
+  const startCamera = async (targetFacingMode?: 'environment' | 'user') => {
     try {
       setHasCameraError(null);
       await stopCamera();
@@ -228,14 +231,16 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
       const currentSessionId = Date.now();
       scanSessionIdRef.current = currentSessionId;
 
+      const activeFacing = targetFacingMode || cameraFacingMode;
+
       // Check if native BarcodeDetector API is supported
       const hasNativeDetector = typeof window !== 'undefined' && 'BarcodeDetector' in window;
       setIsNativeHardwareEngine(hasNativeDetector);
 
       if (hasNativeDetector) {
-        await startNativeBarcodeDetector(currentSessionId);
+        await startNativeBarcodeDetector(currentSessionId, activeFacing);
       } else {
-        await startHtml5QrcodeEngine(currentSessionId);
+        await startHtml5QrcodeEngine(currentSessionId, activeFacing);
       }
       setIsScanning(true);
     } catch (err: any) {
@@ -245,7 +250,8 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
         console.log('Falling back to Html5Qrcode engine...');
         const currentSessionId = Date.now();
         scanSessionIdRef.current = currentSessionId;
-        await startHtml5QrcodeEngine(currentSessionId);
+        const activeFacing = targetFacingMode || cameraFacingMode;
+        await startHtml5QrcodeEngine(currentSessionId, activeFacing);
         setIsScanning(true);
       } catch (fallbackErr: any) {
         isScannerActiveRef.current = false;
@@ -263,15 +269,14 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
    * ENGINE 1: Native Hardware BarcodeDetector
    * Uses Apple Vision / Google MLKit hardware acceleration at 60 FPS
    */
-  const startNativeBarcodeDetector = async (sessionId: number) => {
+  const startNativeBarcodeDetector = async (sessionId: number, facing: 'environment' | 'user') => {
     const video = document.getElementById('native-scanner-video') as HTMLVideoElement | null;
     if (!video) throw new Error('Video element not found');
 
     const isIOS = typeof navigator !== 'undefined' && /iPhone|iPad|iPod/i.test(navigator.userAgent);
     const constraints: MediaStreamConstraints = {
       video: {
-        facingMode: { ideal: 'environment' },
-        // On iPhone XR, locking to 720p @ 24fps stops the OIS actuator motor from overheating and oscillating
+        facingMode: facing === 'user' ? 'user' : { ideal: 'environment' },
         width: isIOS ? { ideal: 1280, max: 1280 } : { ideal: 1920, min: 1280 },
         height: isIOS ? { ideal: 720, max: 720 } : { ideal: 1080, min: 720 },
         frameRate: isIOS ? { ideal: 24, max: 30 } : { ideal: 30, max: 30 },
@@ -403,7 +408,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
   /**
    * ENGINE 2: Html5Qrcode Fallback Engine
    */
-  const startHtml5QrcodeEngine = async (sessionId: number) => {
+  const startHtml5QrcodeEngine = async (sessionId: number, facing: 'environment' | 'user') => {
     await new Promise((r) => setTimeout(r, 120));
 
     if (scanSessionIdRef.current !== sessionId || !isScannerActiveRef.current || (!continuous && hasEmittedScanRef.current)) {
@@ -445,7 +450,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
     };
 
     await html5QrCode.start(
-      { facingMode: 'environment' },
+      { facingMode: facing === 'user' ? 'user' : 'environment' },
       config,
       (decodedText) => {
         // Strict guard against multiple triggers in single-fire mode
@@ -533,6 +538,12 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
     } catch (err) {
       console.warn('Torch error:', err);
     }
+  };
+
+  const toggleFacingMode = async () => {
+    const nextMode = cameraFacingMode === 'environment' ? 'user' : 'environment';
+    setCameraFacingMode(nextMode);
+    await startCamera(nextMode);
   };
 
   const setZoom = async (newZoom: number) => {
@@ -1166,36 +1177,36 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
                 </div>
               )}
 
-              {/* CAMERA OPTIONS FOR SHAKING PHONES */}
+              {/* CAMERA CONTROLS: FRONT / BACK CAMERA SWITCHER & ANTI-SHAKE */}
               <div className="space-y-2.5">
-                {/* PRIMARY RECOMMENDED BUTTON: Apple Native Phone Camera (Uses Apple Deep Fusion & Hardware OIS) */}
-                <label className="w-full py-3.5 px-4 bg-gradient-to-r from-sky-600 via-indigo-600 to-sky-700 hover:from-sky-500 hover:to-indigo-500 active:scale-98 text-white font-bold rounded-2xl text-xs sm:text-sm flex items-center justify-between gap-3 shadow-lg shadow-sky-950/50 transition-all border border-sky-400/40 cursor-pointer">
+                {/* 1-Tap Switch Camera: Front Camera vs Back Camera */}
+                <button
+                  type="button"
+                  onClick={toggleFacingMode}
+                  className="w-full py-3.5 px-4 bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 hover:from-emerald-500 hover:to-teal-500 active:scale-98 text-white font-bold rounded-2xl text-xs sm:text-sm flex items-center justify-between gap-3 shadow-lg shadow-emerald-950/50 transition-all border border-emerald-400/40 cursor-pointer"
+                >
                   <div className="flex items-center gap-3">
                     <div className="w-9 h-9 rounded-xl bg-white/10 flex items-center justify-center shrink-0">
-                      <Camera className="w-5 h-5 text-white" />
+                      <SwitchCamera className="w-5 h-5 text-white" />
                     </div>
                     <div className="text-left">
-                      <div className="font-extrabold flex items-center gap-1.5 text-white text-xs sm:text-sm">
-                        <span>📱 Gamitin ang Camera ng iPhone (Walang Alog)</span>
-                        <span className="text-[10px] bg-sky-950 text-sky-200 px-2 py-0.5 rounded-full border border-sky-400/40 font-semibold">
-                          100% Malinaw
+                      <div className="font-extrabold flex items-center gap-2 text-white text-xs sm:text-sm">
+                        <span>I-lipat sa {cameraFacingMode === 'environment' ? 'Harap (Front Selfie Camera)' : 'Likod (Back Camera)'}</span>
+                        <span className="text-[10px] bg-emerald-950 text-emerald-200 px-2 py-0.5 rounded-full border border-emerald-400/40 font-semibold">
+                          {cameraFacingMode === 'environment' ? 'Back Gamit' : 'Front Gamit (Walang OIS Shake!)'}
                         </span>
                       </div>
-                      <div className="text-[10.5px] text-sky-100/90 font-normal">
-                        Bukas ang mismong camera ng phone na may built-in stabilizer laban sa panginginig
+                      <div className="text-[10.5px] text-emerald-100/90 font-normal">
+                        {cameraFacingMode === 'environment'
+                          ? 'Pindutin para gamitin ang Front Camera — walang mechanical actuator vibration kaya mas matatag'
+                          : 'Kasalukuyang ginagamit ang Front Camera para sa matatag na pagbasa ng barcode'}
                       </div>
                     </div>
                   </div>
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept="image/*"
-                    capture="environment"
-                    onChange={handlePhotoUpload}
-                    className="hidden"
-                  />
-                </label>
+                  <FlipHorizontal className="w-4 h-4 text-emerald-200 shrink-0" />
+                </button>
 
+                {/* Secondary Actions */}
                 <div className="grid grid-cols-2 gap-2">
                   <button
                     type="button"
@@ -1222,17 +1233,26 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
               <div className="text-[11px] text-slate-300 leading-relaxed bg-slate-900/60 p-3 rounded-xl border border-slate-800/80 space-y-1">
                 <div className="flex items-center gap-1.5 font-bold text-sky-300">
                   <Smartphone className="w-3.5 h-3.5 text-sky-400" />
-                  <span>💡 Solusyon sa Maalog na iPhone Camera:</span>
+                  <span>💡 Paalala sa Pag-scan gamit ang Front Camera:</span>
                 </div>
                 <p className="text-slate-400 text-[10.5px]">
-                  1. Itapat ang barcode sa berdeng kahon (crosshair) mga <strong className="text-slate-200">4 hanggang 6 inches</strong> ang layo.<br />
-                  2. Pindutin ang <strong className="text-emerald-300">"🎯 Kumuha sa Loob ng Crosshair"</strong>—aalisin nito ang pag-alog sa pamamagitan ng enhanced contrast frame scan.<br />
-                  3. O gamitin ang <strong className="text-sky-300">"📷 Phone Camera App"</strong> para gamitin ang built-in hardware optical stabilizer ng Apple.
+                  Ang <strong className="text-white">Front Camera</strong> ng iPhone ay walang motorized optical stabilizer kaya hindi ito nanginginig o nagva-vibrate tulad ng sirang back camera. Itapat lang ang barcode sa screen mga <strong className="text-emerald-300">3 hanggang 5 inches</strong> ang layo!
                 </p>
               </div>
 
               {/* Hardware Controls: Zoom & Torch */}
               <div className="bg-slate-950/60 border border-slate-800 rounded-xl p-3 flex flex-wrap items-center justify-between gap-3">
+                {/* Switch Camera quick button */}
+                <button
+                  type="button"
+                  onClick={toggleFacingMode}
+                  className="px-2.5 py-1 text-xs font-semibold rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border border-emerald-500/30 flex items-center gap-1.5 transition-all"
+                  title="Lumipat sa Front / Back Camera"
+                >
+                  <SwitchCamera className="w-3.5 h-3.5" />
+                  <span>{cameraFacingMode === 'environment' ? 'Harap (Front)' : 'Likod (Back)'}</span>
+                </button>
+
                 {/* Zoom buttons */}
                 <div className="flex items-center gap-1.5">
                   <span className="text-xs text-slate-400 flex items-center gap-1 mr-1">
@@ -1256,8 +1276,8 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
                   ))}
                 </div>
 
-                {/* Torch Flashlight Toggle */}
-                {supportsTorch && (
+                {/* Torch Flashlight Toggle (Only available on back camera) */}
+                {supportsTorch && cameraFacingMode === 'environment' && (
                   <button
                     type="button"
                     onClick={toggleTorch}
