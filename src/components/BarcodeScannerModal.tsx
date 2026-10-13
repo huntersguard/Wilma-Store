@@ -1144,7 +1144,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
                     </div>
                     <div className="flex gap-2 justify-center pt-1">
                       <button
-                        onClick={startCamera}
+                        onClick={() => startCamera()}
                         className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors shadow-sm"
                       >
                         <RefreshCw className="w-3.5 h-3.5" /> Subukan Ulit (Retry)
