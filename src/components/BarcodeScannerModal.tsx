@@ -1,5 +1,13 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
+import {
+  BarcodeFormat,
+  DecodeHintType,
+  RGBLuminanceSource,
+  BinaryBitmap,
+  HybridBinarizer,
+  GlobalHistogramBinarizer,
+  MultiFormatReader,
+} from '@zxing/library';
 import {
   Camera,
   Zap,
@@ -10,19 +18,23 @@ import {
   RefreshCw,
   AlertCircle,
   CheckCircle2,
-  Upload,
   Sparkles,
   Target,
-  Crosshair,
   Smartphone,
   ShoppingCart,
   Check,
-  Shield,
   Plus,
   SwitchCamera,
   FlipHorizontal,
+  Upload,
 } from 'lucide-react';
 import { playScanBeep } from '../utils/audio';
+
+declare global {
+  interface Window {
+    BarcodeDetector?: any;
+  }
+}
 
 export interface BarcodeScanFeedback {
   productName: string;
@@ -47,15 +59,68 @@ interface BarcodeScannerModalProps {
   };
 }
 
-// Define BarcodeDetector types for TypeScript
-declare global {
-  interface Window {
-    BarcodeDetector?: any;
-  }
-}
-
-// Module-level anti-burst cooldown: minimum 2.5 seconds between any barcode scans
+// Module-level anti-burst cooldown: minimum 2 seconds between any barcode scans in single mode
 let globalLastScannedTimestamp = 0;
+
+// Cached ZXing MultiFormatReader with standard retail barcode hints
+const zxingHints = new Map<DecodeHintType, any>();
+zxingHints.set(DecodeHintType.POSSIBLE_FORMATS, [
+  BarcodeFormat.EAN_13,
+  BarcodeFormat.EAN_8,
+  BarcodeFormat.UPC_A,
+  BarcodeFormat.UPC_E,
+  BarcodeFormat.CODE_128,
+  BarcodeFormat.CODE_39,
+  BarcodeFormat.ITF,
+  BarcodeFormat.QR_CODE,
+]);
+zxingHints.set(DecodeHintType.TRY_HARDER, true);
+
+const sharedReader = new MultiFormatReader();
+sharedReader.setHints(zxingHints);
+
+/**
+ * Direct high-performance ZXing bitmap decoder from HTMLCanvasElement
+ * Evaluates both HybridBinarizer and GlobalHistogramBinarizer for maximum detection
+ * on vibrating or lower-contrast camera frames (e.g. iPhone XR Chrome & Safari).
+ */
+function decodeCanvasWithZxing(canvas: HTMLCanvasElement): string | null {
+  try {
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    if (!ctx) return null;
+    const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const len = imgData.width * imgData.height;
+    const luminances = new Uint8ClampedArray(len);
+    const data = imgData.data;
+
+    // Fast integer-based luminance: 0.299*R + 0.587*G + 0.114*B
+    for (let i = 0; i < len; i++) {
+      const idx = i * 4;
+      luminances[i] = (data[idx] * 77 + data[idx + 1] * 150 + data[idx + 2] * 29) >> 8;
+    }
+
+    const source = new RGBLuminanceSource(luminances, imgData.width, imgData.height);
+
+    // Pass 1: HybridBinarizer (adaptive block thresholding)
+    try {
+      const hybridBitmap = new BinaryBitmap(new HybridBinarizer(source));
+      const res = sharedReader.decode(hybridBitmap);
+      if (res && res.getText()) {
+        return res.getText().trim();
+      }
+    } catch {}
+
+    // Pass 2: GlobalHistogramBinarizer (high success rate on 1D barcodes with micro-shake or blur)
+    try {
+      const histBitmap = new BinaryBitmap(new GlobalHistogramBinarizer(source));
+      const res = sharedReader.decode(histBitmap);
+      if (res && res.getText()) {
+        return res.getText().trim();
+      }
+    } catch {}
+  } catch {}
+  return null;
+}
 
 /**
  * Forcefully stop and release all video stream tracks across the browser DOM
@@ -85,7 +150,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
   onClose,
   onScan,
   title = 'Scan Barcode',
-  subtitle = 'Itutok ang camera sa barcode. May high-precision scanner at zoom para sa maliliit na barcode.',
+  subtitle = 'Itutok ang camera sa barcode. May dual-engine scanner, anti-shake at zoom para sa iPhone.',
   continuous = false,
   scanFeedback = null,
   onAddUnfoundBarcode,
@@ -100,20 +165,15 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
   const [torchEnabled, setTorchEnabled] = useState(false);
   const [supportsTorch, setSupportsTorch] = useState(false);
   const [zoomLevel, setZoomLevel] = useState<number>(1);
-  const [supportsZoom, setSupportsZoom] = useState(false);
   const [lastScannedCode, setLastScannedCode] = useState<string | null>(null);
-  const [isNativeHardwareEngine, setIsNativeHardwareEngine] = useState(false);
   const [isProcessingPhoto, setIsProcessingPhoto] = useState(false);
   const [snapshotFeedback, setSnapshotFeedback] = useState<string | null>(null);
-  const [antiShakeMode, setAntiShakeMode] = useState<boolean>(() => isIOSDevice);
+  const [antiShakeMode, setAntiShakeMode] = useState<boolean>(true);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const html5QrCodeRef = useRef<Html5Qrcode | null>(null);
   const animationFrameRef = useRef<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const scannerContainerId = 'interactive-barcode-viewport';
-  const lastBgDejitterTimeRef = useRef<number>(0);
 
   // Strict Lifecycle & Anti-Loop Refs
   const isScannerActiveRef = useRef<boolean>(false);
@@ -158,8 +218,8 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
 
   /**
    * Barcode Handler:
-   * - In Continuous Mode: Emits onScan, beeps, sets feedback, but keeps the camera & modal running!
-   * - In Single-Fire Mode: Cancels loops, stops camera, triggers beep, and closes modal.
+   * - In Continuous Mode: Emits onScan, beeps, sets feedback, but keeps the camera & modal running.
+   * - In Single-Fire Mode: Stops camera, triggers beep, and closes modal.
    */
   const handleBarcodeDetected = (decodedText: string) => {
     const cleanText = decodedText.trim();
@@ -185,7 +245,6 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
       setLastScannedCode(cleanText);
       playScanBeep();
       onScan(cleanText);
-      // Stay open and keep camera active for next scan!
       return;
     }
 
@@ -203,400 +262,38 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
     isScannerActiveRef.current = false;
     scanSessionIdRef.current = 0;
 
-    // Immediately stop camera and kill all loops & hardware tracks
     killAllVideoTracks();
     stopCamera();
 
     setLastScannedCode(cleanText);
     playScanBeep();
 
-    // Call onScan and close scanner modal immediately
     onScan(cleanText);
     onClose();
   };
 
   /**
-   * Start Camera with High Accuracy Dual Engine:
-   * 1. Primary: Native hardware BarcodeDetector (iOS Safari 17+, Chrome Android)
-   * 2. Fallback: Html5Qrcode with full-frame multi-pass scanner
-   */
-  const startCamera = async (targetFacingMode?: 'environment' | 'user') => {
-    try {
-      setHasCameraError(null);
-      await stopCamera();
-
-      // Reset activity refs for new start
-      hasEmittedScanRef.current = false;
-      isScannerActiveRef.current = true;
-      const currentSessionId = Date.now();
-      scanSessionIdRef.current = currentSessionId;
-
-      const activeFacing = targetFacingMode || cameraFacingMode;
-
-      // Check if native BarcodeDetector API is supported
-      const hasNativeDetector = typeof window !== 'undefined' && 'BarcodeDetector' in window;
-      setIsNativeHardwareEngine(hasNativeDetector);
-
-      if (hasNativeDetector) {
-        await startNativeBarcodeDetector(currentSessionId, activeFacing);
-      } else {
-        await startHtml5QrcodeEngine(currentSessionId, activeFacing);
-      }
-      setIsScanning(true);
-    } catch (err: any) {
-      console.error('Camera startup error:', err);
-      // Fallback to Html5Qrcode if native engine threw
-      try {
-        console.log('Falling back to Html5Qrcode engine...');
-        const currentSessionId = Date.now();
-        scanSessionIdRef.current = currentSessionId;
-        const activeFacing = targetFacingMode || cameraFacingMode;
-        await startHtml5QrcodeEngine(currentSessionId, activeFacing);
-        setIsScanning(true);
-      } catch (fallbackErr: any) {
-        isScannerActiveRef.current = false;
-        setIsScanning(false);
-        setHasCameraError(
-          fallbackErr?.message ||
-            err?.message ||
-            'Hindi mabuksan ang camera. Pakitingnan ang pahintulot sa browser o i-type ang barcode.'
-        );
-      }
-    }
-  };
-
-  /**
-   * ENGINE 1: Native Hardware BarcodeDetector
-   * Uses Apple Vision / Google MLKit hardware acceleration at 60 FPS
-   */
-  const startNativeBarcodeDetector = async (sessionId: number, facing: 'environment' | 'user') => {
-    const video = document.getElementById('native-scanner-video') as HTMLVideoElement | null;
-    if (!video) throw new Error('Video element not found');
-
-    const isIOS = typeof navigator !== 'undefined' && /iPhone|iPad|iPod/i.test(navigator.userAgent);
-    const constraints: MediaStreamConstraints = {
-      video: {
-        facingMode: facing === 'user' ? 'user' : { ideal: 'environment' },
-        width: isIOS ? { ideal: 1280, max: 1280 } : { ideal: 1920, min: 1280 },
-        height: isIOS ? { ideal: 720, max: 720 } : { ideal: 1080, min: 720 },
-        frameRate: isIOS ? { ideal: 24, max: 30 } : { ideal: 30, max: 30 },
-      },
-      audio: false,
-    };
-
-    const stream = await navigator.mediaDevices.getUserMedia(constraints);
-
-    // If modal was closed or session cancelled during getUserMedia, abort immediately!
-    if (!isScannerActiveRef.current || hasEmittedScanRef.current || scanSessionIdRef.current !== sessionId) {
-      stream.getTracks().forEach((track) => track.stop());
-      return;
-    }
-
-    streamRef.current = stream;
-    video.srcObject = stream;
-    video.setAttribute('playsinline', 'true');
-    video.setAttribute('webkit-playsinline', 'true');
-    video.muted = true;
-
-    await video.play();
-
-    // Inspect capabilities (Zoom & Torch & Continuous Autofocus)
-    const track = stream.getVideoTracks()[0];
-    if (track && track.getCapabilities) {
-      const caps = track.getCapabilities() as any;
-      if ('torch' in caps) setSupportsTorch(true);
-      if ('zoom' in caps && caps.zoom) setSupportsZoom(true);
-
-      // Lock autofocus if supported to prevent jitter hunting
-      try {
-        if (typeof (track as any).applyConstraints === 'function') {
-          await (track as any).applyConstraints({
-            advanced: [{ focusMode: 'continuous' }],
-          });
-        }
-      } catch {}
-    }
-
-    // Supported formats
-    const formats = ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'qr_code', 'itf'];
-    const detector = new window.BarcodeDetector({ formats });
-
-    const scanLoop = async () => {
-      // 1. Strict guard: If session expired, stopped, or scan was already emitted, KILL loop immediately!
-      if (
-        scanSessionIdRef.current !== sessionId ||
-        !isScannerActiveRef.current ||
-        hasEmittedScanRef.current
-      ) {
-        return;
-      }
-
-      if (video && video.readyState >= 2) {
-        try {
-          // Pass A: Direct raw video detection
-          const barcodes = await detector.detect(video);
-
-          // 2. Strict guard after async detect: verify still active
-          if (
-            scanSessionIdRef.current !== sessionId ||
-            !isScannerActiveRef.current ||
-            hasEmittedScanRef.current
-          ) {
-            return;
-          }
-
-          if (barcodes && barcodes.length > 0) {
-            const result = barcodes[0].rawValue;
-            if (result && result.trim()) {
-              handleBarcodeDetected(result.trim());
-              if (!continuous) {
-                return; // Do NOT schedule next frame if single-fire!
-              }
-            }
-          }
-
-          // Pass B: Anti-Shake Background De-Jitter Pass for vibrating / jittery iPhone camera
-          const now = Date.now();
-          if (antiShakeMode && now - lastBgDejitterTimeRef.current > 320) {
-            lastBgDejitterTimeRef.current = now;
-            try {
-              const vw = video.videoWidth || 1280;
-              const vh = video.videoHeight || 720;
-              const cropW = Math.max(120, Math.floor(vw * 0.75));
-              const cropH = Math.max(80, Math.floor(vh * 0.55));
-              const startX = Math.max(0, Math.floor((vw - cropW) / 2));
-              const startY = Math.max(0, Math.floor((vh - cropH) / 2));
-
-              const stillCanvas = document.createElement('canvas');
-              stillCanvas.width = cropW;
-              stillCanvas.height = cropH;
-              const sCtx = stillCanvas.getContext('2d');
-              if (sCtx) {
-                sCtx.drawImage(video, startX, startY, cropW, cropH, 0, 0, cropW, cropH);
-                const sharpCanvas = applySharpeningFilter(stillCanvas);
-                const sharpBarcodes = await detector.detect(sharpCanvas);
-                if (sharpBarcodes && sharpBarcodes.length > 0 && sharpBarcodes[0].rawValue) {
-                  const code = sharpBarcodes[0].rawValue.trim();
-                  if (code) {
-                    handleBarcodeDetected(code);
-                    if (!continuous) return;
-                  }
-                }
-              }
-            } catch {
-              // ignore de-jitter frame errors
-            }
-          }
-        } catch {
-          // ignore detection frame errors
-        }
-      }
-
-      // 3. Reschedule next frame ONLY if scanner is still active and valid
-      if (
-        scanSessionIdRef.current === sessionId &&
-        isScannerActiveRef.current &&
-        (continuous || !hasEmittedScanRef.current)
-      ) {
-        animationFrameRef.current = requestAnimationFrame(scanLoop);
-      }
-    };
-
-    animationFrameRef.current = requestAnimationFrame(scanLoop);
-  };
-
-  /**
-   * ENGINE 2: Html5Qrcode Fallback Engine
-   */
-  const startHtml5QrcodeEngine = async (sessionId: number, facing: 'environment' | 'user') => {
-    await new Promise((r) => setTimeout(r, 120));
-
-    if (scanSessionIdRef.current !== sessionId || !isScannerActiveRef.current || (!continuous && hasEmittedScanRef.current)) {
-      return;
-    }
-
-    const element = document.getElementById(scannerContainerId);
-    if (!element) return;
-
-    const formatsToSupport = [
-      Html5QrcodeSupportedFormats.EAN_13,
-      Html5QrcodeSupportedFormats.EAN_8,
-      Html5QrcodeSupportedFormats.UPC_A,
-      Html5QrcodeSupportedFormats.UPC_E,
-      Html5QrcodeSupportedFormats.CODE_128,
-      Html5QrcodeSupportedFormats.CODE_39,
-      Html5QrcodeSupportedFormats.QR_CODE,
-      Html5QrcodeSupportedFormats.ITF,
-    ];
-
-    const html5QrCode = new Html5Qrcode(scannerContainerId, {
-      formatsToSupport,
-      verbose: false,
-      experimentalFeatures: {
-        useBarCodeDetectorIfSupported: true,
-      },
-    });
-    html5QrCodeRef.current = html5QrCode;
-
-    const isIOS = typeof navigator !== 'undefined' && /iPhone|iPad|iPod/i.test(navigator.userAgent);
-    const config = {
-      fps: isIOS ? 15 : 20,
-      qrbox: (viewfinderWidth: number, viewfinderHeight: number) => ({
-        width: Math.floor(viewfinderWidth * 0.88),
-        height: Math.floor(viewfinderHeight * 0.75),
-      }),
-      aspectRatio: 1.0,
-      disableFlip: false,
-    };
-
-    await html5QrCode.start(
-      { facingMode: facing === 'user' ? 'user' : 'environment' },
-      config,
-      (decodedText) => {
-        // Strict guard against multiple triggers in single-fire mode
-        if (
-          scanSessionIdRef.current !== sessionId ||
-          !isScannerActiveRef.current ||
-          (!continuous && hasEmittedScanRef.current)
-        ) {
-          return;
-        }
-        handleBarcodeDetected(decodedText);
-      },
-      () => {}
-    );
-
-    // Set iOS playsinline
-    const videoElem = document.querySelector(`#${scannerContainerId} video`) as HTMLVideoElement | null;
-    if (videoElem) {
-      videoElem.setAttribute('playsinline', 'true');
-      videoElem.setAttribute('webkit-playsinline', 'true');
-      videoElem.muted = true;
-    }
-  };
-
-  /**
-   * Stop Camera and completely clean up all streams, loops, and video elements
-   */
-  const stopCamera = async () => {
-    isScannerActiveRef.current = false;
-    scanSessionIdRef.current = 0;
-
-    // Immediately stop and disable all video tracks across the document
-    killAllVideoTracks();
-
-    if (animationFrameRef.current) {
-      cancelAnimationFrame(animationFrameRef.current);
-      animationFrameRef.current = null;
-    }
-
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((track) => {
-        try {
-          track.enabled = false;
-          track.stop();
-        } catch {}
-      });
-      streamRef.current = null;
-    }
-
-    const nativeVideo =
-      videoRef.current || (document.getElementById('native-scanner-video') as HTMLVideoElement | null);
-    if (nativeVideo) {
-      try {
-        nativeVideo.pause();
-        nativeVideo.srcObject = null;
-      } catch {}
-    }
-
-    if (html5QrCodeRef.current) {
-      const qrInstance = html5QrCodeRef.current;
-      html5QrCodeRef.current = null;
-      try {
-        if (qrInstance.isScanning) {
-          await qrInstance.stop();
-        }
-        await qrInstance.clear();
-      } catch (err) {
-        // Ignored safe cleanup error if container was already unmounted
-      }
-    }
-
-    setIsScanning(false);
-    setTorchEnabled(false);
-  };
-
-  const toggleTorch = async () => {
-    const track = streamRef.current?.getVideoTracks()[0];
-    if (!track || !supportsTorch) return;
-    try {
-      const nextState = !torchEnabled;
-      await (track as any).applyConstraints({
-        advanced: [{ torch: nextState }],
-      });
-      setTorchEnabled(nextState);
-    } catch (err) {
-      console.warn('Torch error:', err);
-    }
-  };
-
-  const toggleFacingMode = async () => {
-    const nextMode = cameraFacingMode === 'environment' ? 'user' : 'environment';
-    setCameraFacingMode(nextMode);
-    await startCamera(nextMode);
-  };
-
-  const setZoom = async (newZoom: number) => {
-    setZoomLevel(newZoom);
-
-    // 1. Digital Viewport Zoom: Instant GPU-accelerated magnification across ALL devices & iPhones
-    const nativeVideo = document.getElementById('native-scanner-video') as HTMLVideoElement | null;
-    const html5Video = document.querySelector(`#${scannerContainerId} video`) as HTMLVideoElement | null;
-    [nativeVideo, html5Video].forEach((v) => {
-      if (v) {
-        v.style.transform = `scale(${newZoom})`;
-        v.style.transformOrigin = 'center center';
-        v.style.transition = 'transform 0.22s cubic-bezier(0.2, 0, 0, 1)';
-      }
-    });
-
-    // 2. Hardware camera zoom if supported by device
-    try {
-      const track = streamRef.current?.getVideoTracks()[0];
-      if (track && typeof (track as any).applyConstraints === 'function') {
-        await (track as any).applyConstraints({
-          advanced: [{ zoom: newZoom }],
-        });
-      }
-    } catch {}
-  };
-
-  /**
    * Helper: Crop source canvas to the exact center Crosshair Reticle (Region of Interest)
-   * Adjusted proportionally by current zoom level so zoomed barcodes remain razor-sharp
    */
   const cropCanvasToCrosshair = (
     sourceCanvas: HTMLCanvasElement,
-    roiWidthRatio = 0.85,
-    roiHeightRatio = 0.65,
+    roiWidthRatio = 0.82,
+    roiHeightRatio = 0.58,
     currentZoom = 1
   ): HTMLCanvasElement => {
     const cropCanvas = document.createElement('canvas');
     const scale = Math.max(1, currentZoom);
 
-    // Crop the center region visible inside the reticle
     const cropW = Math.max(80, Math.floor((sourceCanvas.width * roiWidthRatio) / scale));
     const cropH = Math.max(80, Math.floor((sourceCanvas.height * roiHeightRatio) / scale));
     const startX = Math.max(0, Math.floor((sourceCanvas.width - cropW) / 2));
     const startY = Math.max(0, Math.floor((sourceCanvas.height - cropH) / 2));
 
-    cropCanvas.width = Math.min(1280, Math.floor(cropW * scale));
-    cropCanvas.height = Math.min(1280, Math.floor(cropH * scale));
+    cropCanvas.width = cropW;
+    cropCanvas.height = cropH;
     const ctx = cropCanvas.getContext('2d');
     if (ctx) {
-      ctx.imageSmoothingEnabled = true;
-      ctx.imageSmoothingQuality = 'high';
-      ctx.drawImage(sourceCanvas, startX, startY, cropW, cropH, 0, 0, cropCanvas.width, cropCanvas.height);
+      ctx.drawImage(sourceCanvas, startX, startY, cropW, cropH, 0, 0, cropW, cropH);
     }
     return cropCanvas;
   };
@@ -645,21 +342,6 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
   };
 
   /**
-   * Helper: Rotate canvas 90 degrees in case barcode is tilted or orientation is vertical
-   */
-  const rotateCanvas90 = (sourceCanvas: HTMLCanvasElement): HTMLCanvasElement => {
-    const rotCanvas = document.createElement('canvas');
-    rotCanvas.width = sourceCanvas.height;
-    rotCanvas.height = sourceCanvas.width;
-    const ctx = rotCanvas.getContext('2d');
-    if (!ctx) return sourceCanvas;
-    ctx.translate(rotCanvas.width / 2, rotCanvas.height / 2);
-    ctx.rotate(Math.PI / 2);
-    ctx.drawImage(sourceCanvas, -sourceCanvas.width / 2, -sourceCanvas.height / 2);
-    return rotCanvas;
-  };
-
-  /**
    * Helper: Boost contrast and convert to grayscale to sharpen blurry / shaking barcodes
    */
   const enhanceBarcodeContrast = (sourceCanvas: HTMLCanvasElement): HTMLCanvasElement => {
@@ -675,9 +357,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
       const data = imgData.data;
 
       for (let i = 0; i < data.length; i += 4) {
-        // Luminance formula
         const gray = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
-        // High contrast stretching
         const contrast = (gray - 128) * 1.85 + 128;
         const finalVal = contrast < 0 ? 0 : contrast > 255 ? 255 : contrast;
         data[i] = finalVal;
@@ -692,44 +372,319 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
   };
 
   /**
-   * Helper: Multi-engine decoder on a single canvas candidate with multi-pass filters
+   * Helper: Rotate canvas 90 degrees in case barcode is held vertically
+   */
+  const rotateCanvas90 = (sourceCanvas: HTMLCanvasElement): HTMLCanvasElement => {
+    const rotCanvas = document.createElement('canvas');
+    rotCanvas.width = sourceCanvas.height;
+    rotCanvas.height = sourceCanvas.width;
+    const ctx = rotCanvas.getContext('2d');
+    if (!ctx) return sourceCanvas;
+    ctx.translate(rotCanvas.width / 2, rotCanvas.height / 2);
+    ctx.rotate(Math.PI / 2);
+    ctx.drawImage(sourceCanvas, -sourceCanvas.width / 2, -sourceCanvas.height / 2);
+    return rotCanvas;
+  };
+
+  /**
+   * Multi-Engine Decoder on Candidate Canvas:
+   * 1. Hardware BarcodeDetector (if available on device)
+   * 2. High-precision ZXing MultiFormatReader (EAN-13, EAN-8, UPC-A, Code-128, QR)
    */
   const decodeFromCanvasCandidate = async (candidateCanvas: HTMLCanvasElement): Promise<string | null> => {
     // 1. Try Native BarcodeDetector (hardware accelerated)
-    if ('BarcodeDetector' in window) {
+    if (typeof window !== 'undefined' && 'BarcodeDetector' in window && window.BarcodeDetector) {
       try {
         const detector = new window.BarcodeDetector({
           formats: ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'qr_code', 'itf'],
         });
         const barcodes = await detector.detect(candidateCanvas);
         if (barcodes && barcodes.length > 0 && barcodes[0].rawValue) {
-          return barcodes[0].rawValue.trim();
+          const code = barcodes[0].rawValue.trim();
+          if (code) return code;
         }
       } catch {}
     }
 
-    // 2. Try Html5Qrcode ZXing engine
-    try {
-      const blob = await new Promise<Blob | null>((resolve) => {
-        candidateCanvas.toBlob((b) => resolve(b), 'image/jpeg', 0.95);
-      });
-      if (blob) {
-        const file = new File([blob], 'snapshot.jpg', { type: 'image/jpeg' });
-        const scanner = html5QrCodeRef.current || new Html5Qrcode('file-scanner-temp', { verbose: false });
-        const res = await scanner.scanFileV2(file, true);
-        if (res?.decodedText) {
-          return res.decodedText.trim();
-        }
-      }
-    } catch {}
+    // 2. Direct ZXing MultiFormatReader
+    const zxingResult = decodeCanvasWithZxing(candidateCanvas);
+    if (zxingResult) {
+      return zxingResult.trim();
+    }
 
     return null;
   };
 
   /**
+   * Start Camera with Dual Engine (Hardware Vision + @zxing/library Viewfinder Pipeline)
+   */
+  const startCamera = async (targetFacingMode?: 'environment' | 'user') => {
+    try {
+      setHasCameraError(null);
+      await stopCamera();
+
+      hasEmittedScanRef.current = false;
+      isScannerActiveRef.current = true;
+      const currentSessionId = Date.now();
+      scanSessionIdRef.current = currentSessionId;
+
+      const activeFacing = targetFacingMode || cameraFacingMode;
+      const video = videoRef.current;
+      if (!video) throw new Error('Video element not found');
+
+      const isIOS = typeof navigator !== 'undefined' && /iPhone|iPad|iPod/i.test(navigator.userAgent);
+      const constraints: MediaStreamConstraints = {
+        video: {
+          facingMode: activeFacing === 'user' ? 'user' : { ideal: 'environment' },
+          width: isIOS ? { ideal: 1280, max: 1920 } : { ideal: 1920, min: 1280 },
+          height: isIOS ? { ideal: 720, max: 1080 } : { ideal: 1080, min: 720 },
+          frameRate: { ideal: 30, max: 60 },
+        },
+        audio: false,
+      };
+
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+
+      if (!isScannerActiveRef.current || hasEmittedScanRef.current || scanSessionIdRef.current !== currentSessionId) {
+        stream.getTracks().forEach((track) => track.stop());
+        return;
+      }
+
+      streamRef.current = stream;
+      video.srcObject = stream;
+      video.setAttribute('playsinline', 'true');
+      video.setAttribute('webkit-playsinline', 'true');
+      video.muted = true;
+
+      await video.play();
+
+      // Inspect capabilities (Zoom & Torch & Autofocus)
+      const track = stream.getVideoTracks()[0];
+      if (track && track.getCapabilities) {
+        const caps = track.getCapabilities() as any;
+        if ('torch' in caps) setSupportsTorch(true);
+
+        try {
+          if (typeof (track as any).applyConstraints === 'function') {
+            await (track as any).applyConstraints({
+              advanced: [{ focusMode: 'continuous' }],
+            });
+          }
+        } catch {}
+      }
+
+      setIsScanning(true);
+
+      // Initialize Native BarcodeDetector if available
+      let nativeDetector: any = null;
+      if (typeof window !== 'undefined' && 'BarcodeDetector' in window && window.BarcodeDetector) {
+        try {
+          nativeDetector = new window.BarcodeDetector({
+            formats: ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'qr_code', 'itf'],
+          });
+        } catch {}
+      }
+
+      // Reusable offscreen canvas for zero-allocation performance
+      const offscreenCropCanvas = document.createElement('canvas');
+      let lastZxingScanTime = 0;
+      let lastDejitterTime = 0;
+
+      const scanLoop = async () => {
+        if (
+          scanSessionIdRef.current !== currentSessionId ||
+          !isScannerActiveRef.current ||
+          hasEmittedScanRef.current
+        ) {
+          return;
+        }
+
+        if (video && video.readyState >= 2 && !video.paused) {
+          const now = Date.now();
+
+          // 1. Stage 1: Hardware BarcodeDetector (Fast Check)
+          if (nativeDetector) {
+            try {
+              const barcodes = await nativeDetector.detect(video);
+              if (
+                scanSessionIdRef.current === currentSessionId &&
+                isScannerActiveRef.current &&
+                !hasEmittedScanRef.current &&
+                barcodes &&
+                barcodes.length > 0 &&
+                barcodes[0].rawValue
+              ) {
+                const code = barcodes[0].rawValue.trim();
+                if (code) {
+                  handleBarcodeDetected(code);
+                  if (!continuous) return;
+                }
+              }
+            } catch {}
+          }
+
+          // 2. Stage 2: Viewfinder ZXing Decode (every ~90ms)
+          // Critical for iPhone XR Safari & Chrome where BarcodeDetector misses 1D retail barcodes
+          if (now - lastZxingScanTime >= 90) {
+            lastZxingScanTime = now;
+            try {
+              const vw = video.videoWidth || 1280;
+              const vh = video.videoHeight || 720;
+              const cropW = Math.max(160, Math.floor(vw * 0.82));
+              const cropH = Math.max(120, Math.floor(vh * 0.58));
+              const startX = Math.max(0, Math.floor((vw - cropW) / 2));
+              const startY = Math.max(0, Math.floor((vh - cropH) / 2));
+
+              offscreenCropCanvas.width = cropW;
+              offscreenCropCanvas.height = cropH;
+              const cCtx = offscreenCropCanvas.getContext('2d', { willReadFrequently: true });
+              if (cCtx) {
+                cCtx.drawImage(video, startX, startY, cropW, cropH, 0, 0, cropW, cropH);
+
+                // Pass A: Direct crop decode via ZXing (Hybrid + GlobalHistogram binarizers)
+                let decoded = decodeCanvasWithZxing(offscreenCropCanvas);
+                if (decoded) {
+                  handleBarcodeDetected(decoded);
+                  if (!continuous) return;
+                }
+
+                // Pass B: Anti-Shake Laplacian Filter (reverses iPhone XR mechanical tremor blur)
+                if (!decoded && antiShakeMode && now - lastDejitterTime >= 240) {
+                  lastDejitterTime = now;
+                  const sharpCanvas = applySharpeningFilter(offscreenCropCanvas);
+                  decoded = decodeCanvasWithZxing(sharpCanvas);
+                  if (decoded) {
+                    handleBarcodeDetected(decoded);
+                    if (!continuous) return;
+                  }
+
+                  // Pass C: High Contrast Stretch
+                  const contrastCanvas = enhanceBarcodeContrast(offscreenCropCanvas);
+                  decoded = decodeCanvasWithZxing(contrastCanvas);
+                  if (decoded) {
+                    handleBarcodeDetected(decoded);
+                    if (!continuous) return;
+                  }
+                }
+              }
+            } catch {}
+          }
+        }
+
+        if (
+          scanSessionIdRef.current === currentSessionId &&
+          isScannerActiveRef.current &&
+          (continuous || !hasEmittedScanRef.current)
+        ) {
+          animationFrameRef.current = requestAnimationFrame(scanLoop);
+        }
+      };
+
+      animationFrameRef.current = requestAnimationFrame(scanLoop);
+    } catch (err: any) {
+      console.error('Camera startup error:', err);
+      isScannerActiveRef.current = false;
+      setIsScanning(false);
+
+      let errMsg = 'Hindi mabuksan ang camera. Pakitingnan ang pahintulot sa browser o i-type ang barcode.';
+      if (
+        err?.name === 'NotAllowedError' ||
+        err?.name === 'PermissionDeniedError' ||
+        String(err).includes('Permission denied')
+      ) {
+        errMsg = 'Hindi pinayagan ang camera (Permission Denied). Pakibuksan ang pahintulot sa browser settings upang magamit ang scanner.';
+      } else if (err?.name === 'NotFoundError' || err?.name === 'DevicesNotFoundError') {
+        errMsg = 'Walang nakitang camera sa iyong device.';
+      } else if (err?.name === 'NotReadableError' || err?.name === 'TrackStartError') {
+        errMsg = 'Kasalukuyang ginagamit ng ibang app ang camera. Pakisara muna ang ibang camera app at subukan muli.';
+      }
+
+      setHasCameraError(errMsg);
+    }
+  };
+
+  /**
+   * Stop Camera and completely clean up all streams, loops, and video elements
+   */
+  const stopCamera = async () => {
+    isScannerActiveRef.current = false;
+    scanSessionIdRef.current = 0;
+
+    killAllVideoTracks();
+
+    if (animationFrameRef.current) {
+      cancelAnimationFrame(animationFrameRef.current);
+      animationFrameRef.current = null;
+    }
+
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => {
+        try {
+          track.enabled = false;
+          track.stop();
+        } catch {}
+      });
+      streamRef.current = null;
+    }
+
+    const video = videoRef.current;
+    if (video) {
+      try {
+        video.pause();
+        video.srcObject = null;
+      } catch {}
+    }
+
+    setIsScanning(false);
+    setTorchEnabled(false);
+  };
+
+  const toggleTorch = async () => {
+    const track = streamRef.current?.getVideoTracks()[0];
+    if (!track || !supportsTorch) return;
+    try {
+      const nextState = !torchEnabled;
+      await (track as any).applyConstraints({
+        advanced: [{ torch: nextState }],
+      });
+      setTorchEnabled(nextState);
+    } catch (err) {
+      console.warn('Torch error:', err);
+    }
+  };
+
+  const toggleFacingMode = async () => {
+    const nextMode = cameraFacingMode === 'environment' ? 'user' : 'environment';
+    setCameraFacingMode(nextMode);
+    await startCamera(nextMode);
+  };
+
+  const setZoom = async (newZoom: number) => {
+    setZoomLevel(newZoom);
+
+    // Viewport Zoom
+    const video = videoRef.current;
+    if (video) {
+      video.style.transform = `scale(${newZoom})`;
+      video.style.transformOrigin = 'center center';
+      video.style.transition = 'transform 0.22s cubic-bezier(0.2, 0, 0, 1)';
+    }
+
+    // Hardware camera zoom if supported
+    try {
+      const track = streamRef.current?.getVideoTracks()[0];
+      if (track && typeof (track as any).applyConstraints === 'function') {
+        await (track as any).applyConstraints({
+          advanced: [{ zoom: newZoom }],
+        });
+      }
+    } catch {}
+  };
+
+  /**
    * 🎯 3-SHOT ANTI-SHAKE BURST SCAN (Special iPhone XR Stabilization):
-   * Captures 3 fast micro-frames spaced 60ms apart to catch the still apex
-   * of the mechanical OIS camera oscillation, applies sharpening filters, and decodes.
+   * Captures 3 fast micro-frames spaced 65ms apart to catch the still apex
+   * of the camera oscillation, applies sharpening filters, and decodes with ZXing.
    */
   const handleBurstAntiShakeScan = async () => {
     if (hasEmittedScanRef.current) return;
@@ -737,16 +692,9 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
     setSnapshotFeedback('Kumukuha ng 3 anti-shake frames at inaalis ang motion blur...');
 
     try {
-      let video: HTMLVideoElement | null = null;
-      if (isNativeHardwareEngine) {
-        video = document.getElementById('native-scanner-video') as HTMLVideoElement | null;
-      } else {
-        video = document.querySelector(`#${scannerContainerId} video`) as HTMLVideoElement | null;
-      }
-
+      const video = videoRef.current;
       if (!video) throw new Error('Video not active');
 
-      // 3 Burst attempts across time to catch zero-velocity pause in camera vibration
       for (let burstIdx = 0; burstIdx < 3; burstIdx++) {
         if (burstIdx > 0) {
           await new Promise((r) => setTimeout(r, 65));
@@ -767,7 +715,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
           return;
         }
 
-        // Candidate 2: Sharpened Crosshair with Laplacian unsharp-mask filter (reverses shake blur)
+        // Candidate 2: Sharpened Crosshair with Laplacian filter (reverses shake blur)
         const sharpCrosshair = applySharpeningFilter(crosshairCanvas);
         decoded = await decodeFromCanvasCandidate(sharpCrosshair);
         if (decoded) {
@@ -800,12 +748,11 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
         }
       }
 
-      // If not recognized after 3 bursts
-      setSnapshotFeedback('Hindi pa nabasa. Ipuwesto ang barcode mga 4-5 pulgada o gamitin ang "📷 Phone Camera App" sa ibaba.');
+      setSnapshotFeedback('Hindi pa nabasa. Ipuwesto ang barcode mga 4-5 pulgada o subukan ang Front Camera sa ibaba.');
       setTimeout(() => setSnapshotFeedback(null), 4000);
     } catch (err: any) {
       console.warn('Burst scan error:', err);
-      setSnapshotFeedback('Hindi nabasa ang barcode sa litrato. Maaari mong gamitin ang "📷 Phone Camera App".');
+      setSnapshotFeedback('Hindi nabasa ang barcode sa litrato. Maaari mong gamitin ang "I-type ang Barcode".');
       setTimeout(() => setSnapshotFeedback(null), 3500);
     } finally {
       setIsProcessingPhoto(false);
@@ -813,14 +760,14 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
   };
 
   /**
-   * Handle Photo Upload / Native Camera Capture (Uses iOS Hardware OIS, Flash & Deep Fusion)
+   * Handle Photo Upload / Direct Photo Capture
    */
   const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     setIsProcessingPhoto(true);
-    setSnapshotFeedback('Binabasa ang barcode mula sa Camera ng iPhone...');
+    setSnapshotFeedback('Binabasa ang barcode mula sa larawan gamit ang ZXing...');
     try {
       const img = new Image();
       img.src = URL.createObjectURL(file);
@@ -832,7 +779,6 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
       const origW = img.naturalWidth || img.width;
       const origH = img.naturalHeight || img.height;
 
-      // Create high-res canvas (capped to 1920 to keep performance optimal)
       const scale = Math.min(1, 1920 / Math.max(origW, origH));
       const targetW = Math.round(origW * scale);
       const targetH = Math.round(origH * scale);
@@ -845,7 +791,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
       if (ctx) {
         ctx.drawImage(img, 0, 0, targetW, targetH);
 
-        // Candidate 1: Full Image as captured by iPhone camera
+        // Candidate 1: Full Image
         let decoded = await decodeFromCanvasCandidate(fullCanvas);
         if (decoded) {
           handleBarcodeDetected(decoded);
@@ -860,7 +806,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
           return;
         }
 
-        // Candidate 3: Center 75% crop (where user naturally points the camera)
+        // Candidate 3: Center 75% crop
         const centerCrop = cropCanvasToCrosshair(fullCanvas, 0.75, 0.55);
         decoded = await decodeFromCanvasCandidate(centerCrop);
         if (decoded) {
@@ -884,7 +830,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
           return;
         }
 
-        // Candidate 6: Rotated 90 degrees in case phone was held horizontally/vertically
+        // Candidate 6: Rotated 90 degrees
         const rotCanvas = rotateCanvas90(centerCrop);
         decoded = await decodeFromCanvasCandidate(rotCanvas);
         if (decoded) {
@@ -892,16 +838,6 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
           return;
         }
       }
-
-      // Fallback direct scan via Html5Qrcode scanFileV2
-      try {
-        const scanner = new Html5Qrcode('file-scanner-temp', { verbose: false });
-        const res = await scanner.scanFileV2(file, true);
-        if (res?.decodedText) {
-          handleBarcodeDetected(res.decodedText);
-          return;
-        }
-      } catch {}
 
       setSnapshotFeedback('Hindi nabasa ang barcode. Tiyaking maliwanag at nakatutok sa guhit ng barcode bago kumuha ng litrato.');
       setTimeout(() => setSnapshotFeedback(null), 4000);
@@ -923,17 +859,11 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
     handleBarcodeDetected(code);
   };
 
-  // Anti-shake capture snapshot handler for iPhone XR & mobile cameras
-  const handleCaptureSnapshot = handleBurstAntiShakeScan;
-
   if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/85 backdrop-blur-sm">
       <div className="relative w-full max-w-lg bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[94vh]">
-        {/* Hidden temp div for fallback file scanner */}
-        <div id="file-scanner-temp" className="hidden" />
-
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800 bg-slate-900/90">
           <div className="flex items-center gap-2.5 min-w-0">
@@ -948,11 +878,9 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
                     ⚡ Tuluy-tuloy na Scan
                   </span>
                 )}
-                {isNativeHardwareEngine && (
-                  <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 hidden sm:flex items-center gap-0.5">
-                    <Sparkles className="w-2.5 h-2.5" /> Hardware Vision AI
-                  </span>
-                )}
+                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 hidden sm:flex items-center gap-0.5">
+                  <Sparkles className="w-2.5 h-2.5" /> ZXing Multi-Format Engine
+                </span>
               </div>
               <p className="text-xs text-slate-400 line-clamp-1">{subtitle}</p>
             </div>
@@ -1067,38 +995,24 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
             <div className="space-y-3">
               {/* Camera Viewport container */}
               <div className="relative rounded-2xl overflow-hidden bg-black h-64 sm:h-80 w-full border border-slate-800 flex items-center justify-center">
-                {/* Native video element for BarcodeDetector engine */}
+                {/* Unified HTML5 video element */}
                 <video
-                  id="native-scanner-video"
                   ref={videoRef}
                   style={{
                     transform: `scale(${zoomLevel})`,
                     transformOrigin: 'center center',
                     transition: 'transform 0.2s ease-out',
                   }}
-                  className={`w-full h-full object-cover ${!isNativeHardwareEngine ? 'hidden' : ''}`}
+                  className="w-full h-full object-cover"
                   playsInline
+                  autoPlay
                   muted
                 />
 
-                {/* Html5Qrcode fallback container */}
-                <div
-                  id={scannerContainerId}
-                  style={{
-                    transform: `scale(${zoomLevel})`,
-                    transformOrigin: 'center center',
-                    transition: 'transform 0.2s ease-out',
-                  }}
-                  className={`w-full h-full object-cover ${isNativeHardwareEngine ? 'hidden' : ''}`}
-                />
-
                 {/* Laser Overlay Guide with Clean Unobstructed Crosshair Box */}
-                {!hasCameraError && (
+                {!hasCameraError && isScanning && (
                   <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                    {/* Clean crosshair reticle without any buttons, text, or obstructing elements */}
-                    <div
-                      className="relative w-[86%] max-w-[320px] h-38 sm:h-48 border-2 border-emerald-400 rounded-2xl shadow-[0_0_25px_rgba(16,185,129,0.35)] flex items-center justify-center pointer-events-none"
-                    >
+                    <div className="relative w-[86%] max-w-[320px] h-38 sm:h-48 border-2 border-emerald-400 rounded-2xl shadow-[0_0_25px_rgba(16,185,129,0.35)] flex items-center justify-center pointer-events-none">
                       {/* Corner marks */}
                       <span className="absolute -top-1.5 -left-1.5 w-5 h-5 border-t-3 border-l-3 border-emerald-400 rounded-tl-xl" />
                       <span className="absolute -top-1.5 -right-1.5 w-5 h-5 border-t-3 border-r-3 border-emerald-400 rounded-tr-xl" />
@@ -1115,7 +1029,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
                 {isProcessingPhoto && (
                   <div className="absolute inset-0 bg-slate-950/80 backdrop-blur-xs flex flex-col items-center justify-center text-white space-y-2 z-20">
                     <RefreshCw className="w-7 h-7 text-emerald-400 animate-spin" />
-                    <span className="text-xs font-semibold">Binabasa ang barcode sa litrato...</span>
+                    <span className="text-xs font-semibold">Binabasa ang barcode gamit ang ZXing...</span>
                   </div>
                 )}
 
@@ -1127,7 +1041,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
                   </div>
                 )}
 
-                {/* Camera error state */}
+                {/* Camera error state & Permission Denied recovery */}
                 {hasCameraError && (
                   <div className="p-4 text-center space-y-3 z-10 max-w-sm bg-slate-900/95 rounded-xl border border-slate-700 m-2">
                     <AlertCircle className="w-8 h-8 text-amber-400 mx-auto" />
@@ -1136,9 +1050,9 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
                       <p className="text-[11px] text-slate-300 leading-relaxed">{hasCameraError}</p>
                     </div>
                     <div className="text-left bg-slate-950 p-2.5 rounded-lg border border-slate-800 text-[11px] text-slate-400 space-y-1">
-                      <span className="font-semibold text-sky-400 block">📱 Paano paganahin sa iPhone (Safari):</span>
-                      <p>1. Pindutin ang icon na <strong className="text-white">"aA"</strong> sa Safari address bar.</p>
-                      <p>2. Pindutin ang <strong className="text-white">"Website Settings"</strong>.</p>
+                      <span className="font-semibold text-sky-400 block">📱 Paano paganahin sa iPhone (Safari & Chrome):</span>
+                      <p>1. Pindutin ang icon na <strong className="text-white">"aA"</strong> o <strong>settings/lock</strong> sa Safari/Chrome address bar.</p>
+                      <p>2. Pindutin ang <strong className="text-white">"Website Settings"</strong> o <strong>"Site Settings"</strong>.</p>
                       <p>3. Sa <strong className="text-white">"Camera"</strong>, piliin ang <strong className="text-emerald-400">"Allow"</strong>.</p>
                       <p>4. Pindutin ang <strong>Subukan Ulit</strong> sa ibaba.</p>
                     </div>
@@ -1198,7 +1112,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
                       </div>
                       <div className="text-[10.5px] text-emerald-100/90 font-normal">
                         {cameraFacingMode === 'environment'
-                          ? 'Pindutin para gamitin ang Front Camera — walang mechanical actuator vibration kaya mas matatag'
+                          ? 'Pindutin para gamitin ang Front Camera — walang motorized actuator vibration kaya mas matatag'
                           : 'Kasalukuyang ginagamit ang Front Camera para sa matatag na pagbasa ng barcode'}
                       </div>
                     </div>
@@ -1210,7 +1124,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
                 <div className="grid grid-cols-2 gap-2">
                   <button
                     type="button"
-                    onClick={handleCaptureSnapshot}
+                    onClick={handleBurstAntiShakeScan}
                     disabled={isProcessingPhoto}
                     className="py-2.5 px-3 bg-slate-900 hover:bg-slate-800 active:scale-98 text-slate-200 font-semibold rounded-xl text-xs flex items-center justify-center gap-2 transition-all border border-slate-800"
                   >
@@ -1218,25 +1132,28 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
                     <span>🎯 Anti-Shake Snap</span>
                   </button>
 
-                  <button
-                    type="button"
-                    onClick={() => setActiveTab('manual')}
-                    className="py-2.5 px-3 bg-slate-900 hover:bg-slate-800 active:scale-98 text-slate-200 font-semibold rounded-xl text-xs flex items-center justify-center gap-2 transition-all border border-slate-800"
-                  >
-                    <Search className="w-4 h-4 text-amber-400" />
-                    <span>I-type ang Barcode</span>
-                  </button>
+                  <label className="py-2.5 px-3 bg-slate-900 hover:bg-slate-800 active:scale-98 text-slate-200 font-semibold rounded-xl text-xs flex items-center justify-center gap-2 transition-all border border-slate-800 cursor-pointer">
+                    <Upload className="w-4 h-4 text-sky-400" />
+                    <span>📷 Mag-upload ng Litrato</span>
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept="image/*"
+                      onChange={handlePhotoUpload}
+                      className="hidden"
+                    />
+                  </label>
                 </div>
               </div>
 
-              {/* iPhone Anti-Shake Guidance Card */}
+              {/* Guidance Card for Front Camera vs Back Camera */}
               <div className="text-[11px] text-slate-300 leading-relaxed bg-slate-900/60 p-3 rounded-xl border border-slate-800/80 space-y-1">
                 <div className="flex items-center gap-1.5 font-bold text-sky-300">
                   <Smartphone className="w-3.5 h-3.5 text-sky-400" />
-                  <span>💡 Paalala sa Pag-scan gamit ang Front Camera:</span>
+                  <span>💡 Paalala sa Pag-scan:</span>
                 </div>
                 <p className="text-slate-400 text-[10.5px]">
-                  Ang <strong className="text-white">Front Camera</strong> ng iPhone ay walang motorized optical stabilizer kaya hindi ito nanginginig o nagva-vibrate tulad ng sirang back camera. Itapat lang ang barcode sa screen mga <strong className="text-emerald-300">3 hanggang 5 inches</strong> ang layo!
+                  Kung nanginginig ang likod na camera ng iPhone XR, pindutin ang <strong className="text-white">"I-lipat sa Harap (Front Camera)"</strong> sa itaas o pindutin ang <strong className="text-emerald-400">"🎯 Anti-Shake Snap"</strong> para sa 3-shot burst barcode reading!
                 </p>
               </div>
 
